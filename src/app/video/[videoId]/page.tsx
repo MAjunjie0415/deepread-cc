@@ -61,7 +61,8 @@ export default function VideoPage() {
 
       try {
         // 从 popup 窗口中提取字幕数据
-        const ytData = popup.eval('window.ytInitialPlayerResponse');
+        // @ts-ignore - popup.eval 在运行时存在
+        const ytData = popup.eval?.('window.ytInitialPlayerResponse');
         
         console.log('📊 ytInitialPlayerResponse:', ytData ? '存在' : '不存在');
         
