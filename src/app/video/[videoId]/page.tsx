@@ -30,23 +30,121 @@ export default function VideoPage() {
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
   }
 
-  // 前端直接获取字幕 - 使用 CORS 代理 + 完整翻页
+  // 前端直接获取字幕 - 在 iframe 中提取
   const fetchTranscriptFromFrontend = async () => {
     console.log('\n' + '='.repeat(60));
-    console.log('🎯 前端获取字幕 - TimedText API + 自动翻页');
+    console.log('🎯 前端获取字幕 - 从 YouTube 页面直接提取');
     console.log('📹 视频 ID:', videoId);
     console.log('='.repeat(60));
     
     setLoading(true);
     setError(null);
-    setFetchMethod('前端直接获取');
+    setFetchMethod('前端 iframe 提取');
 
     try {
-      const allSegments: TranscriptSegment[] = [];
-      let pageCount = 0;
-      let nextStart = 0;
-      const maxPages = 50;
+      // 方法：打开一个隐藏的 popup 窗口加载 YouTube 页面
+      // 然后从页面中提取 ytInitialPlayerResponse
+      console.log('🌐 打开 YouTube 页面...');
+      
+      const popup = window.open(
+        `https://www.youtube.com/watch?v=${videoId}`,
+        '_blank',
+        'width=1,height=1,left=-1000,top=-1000'
+      );
+      
+      if (!popup) {
+        throw new Error('无法打开弹窗，请允许弹窗权限');
+      }
 
+      // 等待页面加载
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      try {
+        // 从 popup 窗口中提取字幕数据
+        const ytData = popup.eval('window.ytInitialPlayerResponse');
+        
+        console.log('📊 ytInitialPlayerResponse:', ytData ? '存在' : '不存在');
+        
+        if (!ytData || !ytData.captions) {
+          throw new Error('页面中没有字幕数据');
+        }
+
+        const captionTracks = ytData.captions.playerCaptionsTracklistRenderer?.captionTracks;
+        
+        if (!captionTracks || captionTracks.length === 0) {
+          throw new Error('没有找到字幕轨道');
+        }
+
+        console.log(`✅ 找到 ${captionTracks.length} 个字幕轨道`);
+
+        // 选择英语字幕
+        const track = captionTracks.find((t: any) => t.languageCode === 'en') || captionTracks[0];
+        const subtitleUrl = track.baseUrl;
+
+        console.log('📥 下载字幕:', subtitleUrl);
+
+        // 关闭 popup
+        popup.close();
+
+        // 下载字幕内容
+        const response = await fetch(subtitleUrl);
+        const data = await response.json();
+
+        const allSegments: TranscriptSegment[] = [];
+        let segmentId = 0;
+
+        // 解析字幕
+        if (data.events) {
+          for (const event of data.events) {
+            if (event.segs) {
+              const text = event.segs.map((seg: any) => seg.utf8 || '').join('').trim();
+              if (text) {
+                allSegments.push({
+                  segment_id: `seg_${segmentId.toString().padStart(4, '0')}`,
+                  start: event.tStartMs / 1000,
+                  end: (event.tStartMs + event.dDurationMs) / 1000,
+                  timestamp: formatTimestamp(event.tStartMs / 1000),
+                  text: text
+                });
+                segmentId++;
+              }
+            }
+          }
+        }
+
+        console.log(`✅ 成功获取 ${allSegments.length} 段字幕`);
+
+        setTranscript(allSegments);
+        setError(null);
+        setFetchMethod('前端 Popup 提取');
+
+      } catch (extractError: any) {
+        popup.close();
+        throw extractError;
+      }
+
+    } catch (error: any) {
+      console.error('❌ 前端获取失败:', error);
+      setError(`无法获取字幕: ${error.message}`);
+      setFetchMethod('');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 页面加载时自动获取
+  useEffect(() => {
+    fetchTranscriptFromFrontend();
+  }, [videoId]);
+
+  // 旧的后端方法（已弃用）
+  const fetchTranscriptFromBackendOld = async () => {
+    console.log('🔄 使用后端 API 获取字幕...');
+    setLoading(true);
+    setError(null);
+    setFetchMethod('后端 API');
+
+    try {
       // 语言配置
       const languageConfigs = [
         { lang: '', name: '自动选择' },
