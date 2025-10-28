@@ -316,11 +316,6 @@ export default function VideoPage() {
     }
   };
 
-  // 页面加载时自动获取
-  useEffect(() => {
-    fetchTranscriptFromBackend();
-  }, [videoId]);
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
@@ -395,8 +390,8 @@ export default function VideoPage() {
                       ? '可能原因：1) 视频没有字幕 2) 网络限制 3) CORS 代理失败'
                       : 'Possible reasons: 1) No captions 2) Network restriction 3) CORS proxy failed'}
                   </p>
-                  <Button 
-                    onClick={fetchTranscriptFromBackend} 
+                  <Button
+                    onClick={fetchTranscriptFromFrontend}
                     variant="outline" 
                     size="sm"
                     className="w-full"
