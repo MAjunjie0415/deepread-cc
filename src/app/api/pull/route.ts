@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { YoutubeTranscript } from 'youtube-transcript';
 
 function formatTimestamp(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -25,9 +24,100 @@ function extractVideoId(url: string): string | null {
   return null;
 }
 
+interface TranscriptSegment {
+  text: string;
+  start: number;
+  duration: number;
+}
+
+async function fetchTranscriptWithPagination(videoId: string, lang: string = 'en'): Promise<TranscriptSegment[]> {
+  const allSegments: TranscriptSegment[] = [];
+  let startTime = 0;
+  let hasMore = true;
+  let retryCount = 0;
+  const MAX_RETRIES = 3;
+
+  while (hasMore && retryCount < MAX_RETRIES) {
+    try {
+      // 使用 YouTube 的 timedtext API，参考 Kimi 的成功方案
+      const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3&t=${startTime}`;
+      
+      console.log(`Fetching transcript chunk starting at ${startTime}s...`);
+      
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.events || data.events.length === 0) {
+        console.log('No more segments found, pagination complete');
+        hasMore = false;
+        break;
+      }
+
+      // 处理返回的字幕数据
+      const segments: TranscriptSegment[] = data.events
+        .filter((event: any) => event.segs && event.segs.length > 0)
+        .map((event: any) => {
+          const text = event.segs.map((seg: any) => seg.utf8).join('').trim();
+          return {
+            text,
+            start: event.tStartMs / 1000,
+            duration: event.dDurationMs / 1000
+          };
+        })
+        .filter((segment: TranscriptSegment) => segment.text.length > 0);
+
+      if (segments.length === 0) {
+        console.log('No valid segments in this chunk, stopping pagination');
+        hasMore = false;
+        break;
+      }
+
+      allSegments.push(...segments);
+      
+      // 更新 startTime 为最后一个片段的结束时间
+      const lastSegment = segments[segments.length - 1];
+      startTime = lastSegment.start + lastSegment.duration + 0.01; // 加 0.01 秒避免重复
+      
+      console.log(`Fetched ${segments.length} segments, total: ${allSegments.length}, next start: ${startTime}s`);
+      
+      // 如果获取的片段很少，可能已经到末尾了
+      if (segments.length < 10) {
+        hasMore = false;
+      }
+      
+      // 添加延迟避免请求过于频繁
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error) {
+      console.error(`Error fetching transcript chunk at ${startTime}s:`, error);
+      retryCount++;
+      
+      if (retryCount < MAX_RETRIES) {
+        console.log(`Retrying... (${retryCount}/${MAX_RETRIES})`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+      } else {
+        console.error('Max retries reached, stopping pagination');
+        hasMore = false;
+      }
+    }
+  }
+
+  console.log(`Pagination complete. Total segments: ${allSegments.length}`);
+  return allSegments;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { url, lang = 'en,zh-Hans,zh-Hant' } = await req.json();
+    const { url, lang = 'en' } = await req.json();
 
     if (!url) {
       return NextResponse.json(
@@ -37,7 +127,6 @@ export async function POST(req: NextRequest) {
     }
 
     const videoId = extractVideoId(url);
-
     if (!videoId) {
       return NextResponse.json(
         { success: false, error: 'Invalid YouTube URL' },
@@ -45,36 +134,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let transcript: { text: string; offset: number; duration: number }[] = [];
-    let retries = 0;
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY_MS = 2000; // 2 seconds
+    console.log(`Fetching transcript for video ID: ${videoId} with pagination`);
 
-    while (retries < MAX_RETRIES) {
-      try {
-        // The youtube-transcript library handles language selection and fetching
-        // It attempts to find the best available transcript for the given language(s)
-        transcript = await YoutubeTranscript.fetchTranscript(videoId, {
-          lang: lang.split(',').map((l: string) => l.trim())
-        });
-        break; // Success, exit loop
-      } catch (error: any) {
-        console.error(`Attempt ${retries + 1} failed to fetch transcript for video ${videoId}:`, error.message);
-        retries++;
-        if (retries < MAX_RETRIES) {
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-        } else {
-          // If all retries fail, check for specific errors
-          if (error.message.includes('No captions found')) {
-            throw new Error('No captions found for this video in the requested languages.');
-          } else if (error.message.includes('Failed to retrieve captions')) {
-            throw new Error('Failed to retrieve captions. The video might be unavailable or restricted.');
-          } else {
-            throw new Error(`Failed to fetch transcript after ${MAX_RETRIES} attempts: ${error.message}`);
-          }
-        }
-      }
-    }
+    // 使用分页方式获取完整字幕
+    const transcript = await fetchTranscriptWithPagination(videoId, lang);
 
     if (!transcript || transcript.length === 0) {
       return NextResponse.json(
@@ -83,19 +146,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Format the transcript segments
+    // 格式化为带时间戳的文本
     const formattedTranscript = transcript.map((segment, index) => ({
       segment_id: `seg_${String(index).padStart(4, '0')}`,
-      start: segment.offset / 1000,
-      end: (segment.offset + segment.duration) / 1000,
-      timestamp: formatTimestamp(segment.offset / 1000),
-      text: segment.text,
+      start: segment.start,
+      end: segment.start + segment.duration,
+      timestamp: formatTimestamp(segment.start),
+      text: segment.text
     }));
 
-    const totalDurationSeconds = formattedTranscript.length > 0
+    const wordCount = formattedTranscript.reduce((count, segment) => 
+      count + segment.text.split(/\s+/).filter(Boolean).length, 0
+    );
+
+    const totalDuration = formattedTranscript.length > 0
       ? formattedTranscript[formattedTranscript.length - 1].end
       : 0;
-    const wordCount = formattedTranscript.reduce((acc, segment) => acc + segment.text.split(/\s+/).filter(Boolean).length, 0);
+
+    console.log(`Successfully fetched ${formattedTranscript.length} segments, ${wordCount} words, ${formatTimestamp(totalDuration)} duration`);
 
     return NextResponse.json({
       success: true,
@@ -104,10 +172,10 @@ export async function POST(req: NextRequest) {
       meta: {
         word_count: wordCount,
         segment_count: formattedTranscript.length,
-        duration_seconds: totalDurationSeconds,
-        duration_formatted: formatTimestamp(totalDurationSeconds),
+        duration_seconds: totalDuration,
+        duration_formatted: formatTimestamp(totalDuration),
         timestamps_present: true,
-        source: 'youtube_transcript_api'
+        source: 'youtube_timedtext_api_with_pagination'
       }
     });
 
