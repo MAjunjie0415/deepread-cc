@@ -210,9 +210,48 @@ export default function VideoPage() {
     }
   };
 
+  // 从后端 API 获取字幕（调用 Zeabur）
+  const fetchTranscriptFromBackend = async () => {
+    console.log('🔄 调用后端 API 获取字幕...');
+    setLoading(true);
+    setError(null);
+    setFetchMethod('后端 API (Zeabur)');
+
+    try {
+      const response = await fetch('/api/pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: videoUrl }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '后端 API 调用失败');
+      }
+
+      const data = await response.json();
+      
+      if (!data.success || !data.transcript) {
+        throw new Error('后端返回数据格式错误');
+      }
+
+      console.log(`✅ 成功获取 ${data.transcript.length} 段字幕`);
+      setTranscript(data.transcript);
+      setError(null);
+      setFetchMethod(`后端 API (${data.meta?.source || 'Zeabur'})`);
+
+    } catch (error: any) {
+      console.error('❌ 后端 API 调用失败:', error);
+      setError(`无法获取字幕: ${error.message}`);
+      setFetchMethod('');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 页面加载时自动获取
   useEffect(() => {
-    fetchTranscriptFromFrontend();
+    fetchTranscriptFromBackend();
   }, [videoId]);
 
   return (
@@ -290,7 +329,7 @@ export default function VideoPage() {
                       : 'Possible reasons: 1) No captions 2) Network restriction 3) CORS proxy failed'}
                   </p>
                   <Button 
-                    onClick={fetchTranscriptFromFrontend} 
+                    onClick={fetchTranscriptFromBackend} 
                     variant="outline" 
                     size="sm"
                     className="w-full"
