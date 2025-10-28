@@ -1,11 +1,18 @@
 'use client';
 
 import { useParams, useSearchParams } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { TranscriptSegment, DeepReadingResponse } from '@/types';
+import { TranscriptSegment } from '@/types';
+
+// 声明 YouTube IFrame API 类型
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
 
 export default function VideoPage() {
   const params = useParams();
@@ -17,14 +24,33 @@ export default function VideoPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [language, setLanguage] = useState<'en' | 'zh'>('zh');
+  const playerRef = useRef<any>(null);
 
-  // 从 YouTube IFrame API 获取字幕
-  const fetchTranscriptFromPlayer = async () => {
+  // 加载 YouTube IFrame API
+  useEffect(() => {
+    // 如果已经加载过，直接返回
+    if (window.YT) {
+      return;
+    }
+
+    // 加载 YouTube IFrame API 脚本
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    const firstScriptTag = document.getElementsByTagName('script')[0];
+    firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+
+    // API 准备好后的回调
+    window.onYouTubeIframeAPIReady = () => {
+      console.log('YouTube IFrame API ready');
+    };
+  }, []);
+
+  // 从后端 API 获取字幕（备用方案）
+  const fetchTranscriptFromBackend = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      // 调用后端 API
       const response = await fetch('/api/pull', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -40,14 +66,107 @@ export default function VideoPage() {
       setTranscript(data.transcript);
     } catch (error: any) {
       setError(error.message);
+      console.error('Backend fetch failed:', error);
+      
+      // 如果后端失败，尝试前端方案
+      await fetchTranscriptFromFrontend();
     } finally {
       setLoading(false);
     }
   };
 
+  // 从前端直接获取字幕（主要方案）
+  const fetchTranscriptFromFrontend = async () => {
+    console.log('尝试从前端获取字幕...');
+    setLoading(true);
+    setError(null);
+
+    try {
+      // 使用 fetch 直接从浏览器访问 YouTube
+      const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      const response = await fetch(videoPageUrl);
+      
+      if (!response.ok) {
+        throw new Error('无法访问 YouTube 视频页面');
+      }
+
+      const html = await response.text();
+      
+      // 提取 ytInitialPlayerResponse
+      const playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
+      if (!playerResponseMatch) {
+        throw new Error('无法从页面提取播放器数据');
+      }
+
+      const playerResponse = JSON.parse(playerResponseMatch[1]);
+      const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer;
+      
+      if (!captions || !captions.captionTracks || captions.captionTracks.length === 0) {
+        throw new Error('视频没有可用的字幕');
+      }
+
+      // 获取第一个可用的字幕轨道
+      const captionTrack = captions.captionTracks[0];
+      const captionUrl = captionTrack.baseUrl;
+
+      console.log('字幕 URL:', captionUrl);
+
+      // 获取字幕内容
+      const captionResponse = await fetch(`${captionUrl}&fmt=json3`);
+      if (!captionResponse.ok) {
+        throw new Error('无法获取字幕内容');
+      }
+
+      const captionData = await captionResponse.json();
+      
+      if (!captionData.events || captionData.events.length === 0) {
+        throw new Error('字幕数据为空');
+      }
+
+      // 转换为我们的格式
+      const segments: TranscriptSegment[] = captionData.events
+        .filter((event: any) => event.segs && event.segs.length > 0)
+        .map((event: any, index: number) => {
+          const text = event.segs.map((seg: any) => seg.utf8 || '').join('').trim();
+          const start = event.tStartMs / 1000;
+          const duration = event.dDurationMs / 1000;
+          
+          return {
+            segment_id: `seg_${index.toString().padStart(4, '0')}`,
+            start,
+            end: start + duration,
+            timestamp: formatTimestamp(start),
+            text
+          };
+        })
+        .filter((seg: TranscriptSegment) => seg.text.length > 0);
+
+      console.log(`成功获取 ${segments.length} 段字幕`);
+      setTranscript(segments);
+      setError(null);
+
+    } catch (error: any) {
+      console.error('Frontend fetch failed:', error);
+      setError(`前端获取失败: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  function formatTimestamp(seconds: number): string {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  }
+
   useEffect(() => {
-    // 页面加载时自动获取字幕
-    fetchTranscriptFromPlayer();
+    // 页面加载时尝试前端获取
+    fetchTranscriptFromFrontend();
   }, [videoId]);
 
   return (
@@ -106,15 +225,23 @@ export default function VideoPage() {
             {error && (
               <Card className="border-red-200 bg-red-50">
                 <CardContent className="p-6">
-                  <p className="text-red-600 text-sm">❌ {error}</p>
-                  <Button 
-                    onClick={fetchTranscriptFromPlayer} 
-                    variant="outline" 
-                    size="sm"
-                    className="mt-2"
-                  >
-                    {language === 'zh' ? '重试' : 'Retry'}
-                  </Button>
+                  <p className="text-red-600 text-sm mb-2">❌ {error}</p>
+                  <div className="flex gap-2">
+                    <Button 
+                      onClick={fetchTranscriptFromFrontend} 
+                      variant="outline" 
+                      size="sm"
+                    >
+                      {language === 'zh' ? '重试（前端）' : 'Retry (Frontend)'}
+                    </Button>
+                    <Button 
+                      onClick={fetchTranscriptFromBackend} 
+                      variant="outline" 
+                      size="sm"
+                    >
+                      {language === 'zh' ? '尝试后端' : 'Try Backend'}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -167,7 +294,6 @@ export default function VideoPage() {
                 className="w-full mt-4" 
                 size="lg"
                 onClick={() => {
-                  // TODO: 跳转到分析页面
                   alert('开始深度分析功能即将上线！');
                 }}
               >
@@ -180,4 +306,3 @@ export default function VideoPage() {
     </div>
   );
 }
-
