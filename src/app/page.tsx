@@ -1,261 +1,176 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { InterestSlider } from '@/components/InterestSlider';
-import { MainLineCards } from '@/components/MainLineCards';
-import { NoteEditor } from '@/components/NoteEditor';
-import { FlashCardZone } from '@/components/FlashCardZone';
-import { AppState, TranscriptSegment, DeepReadingResponse, DrillDownResponse } from '@/types';
 
-const defaultInterests = [
-  { label: 'AI', weight: 0.5 },
-  { label: 'Technology', weight: 0.3 },
-  { label: 'Business', weight: 0.2 },
-  { label: 'Psychology', weight: 0.1 },
-  { label: 'Science', weight: 0.4 },
-];
+function extractVideoId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+    /youtube\.com\/watch\?.*v=([^&\n?#]+)/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
 
 export default function HomePage() {
-  const [appState, setAppState] = useState<AppState>({
-    youtubeUrl: '',
-    transcript: [],
-    mainLines: [],
-    notes: '',
-    flashCards: [],
-    drillDownContent: '',
-    loading: false,
-    error: null,
-    language: 'zh', // Default to Chinese
-    interests: defaultInterests,
-  });
+  const router = useRouter();
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<'en' | 'zh'>('zh');
 
-  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setAppState(prev => ({ ...prev, youtubeUrl: e.target.value }));
-  };
+  const handleSubmit = () => {
+    setError(null);
 
-  const handleFetchTranscript = async () => {
-    setAppState(prev => ({ ...prev, loading: true, error: null, transcript: [] }));
-    try {
-      const response = await fetch('/api/pull', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: appState.youtubeUrl, lang: appState.language }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch transcript');
-      }
-
-      const data = await response.json();
-      setAppState(prev => ({ ...prev, transcript: data.transcript, loading: false }));
-    } catch (error: any) {
-      setAppState(prev => ({ ...prev, error: error.message, loading: false }));
+    if (!youtubeUrl.trim()) {
+      setError(language === 'zh' ? '请输入 YouTube 链接' : 'Please enter a YouTube URL');
+      return;
     }
-  };
 
-  const handleAnalyze = async () => {
-    setAppState(prev => ({ ...prev, loading: true, error: null, mainLines: [] }));
-    try {
-      const response = await fetch('/api/deep_reading', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transcript: appState.transcript,
-          interests: appState.interests,
-          lang: appState.language,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to perform deep reading');
-      }
-
-      const data: DeepReadingResponse = await response.json();
-      setAppState(prev => ({
-        ...prev,
-        mainLines: data.main_lines,
-        notes: data.human_note,
-        flashCards: data.flashcards,
-        loading: false,
-      }));
-    } catch (error: any) {
-      setAppState(prev => ({ ...prev, error: error.message, loading: false }));
+    const videoId = extractVideoId(youtubeUrl);
+    if (!videoId) {
+      setError(language === 'zh' ? '无效的 YouTube 链接' : 'Invalid YouTube URL');
+      return;
     }
+
+    // 跳转到视频页面
+    router.push(`/video/${videoId}?url=${encodeURIComponent(youtubeUrl)}`);
   };
 
-  const handleDrillDown = async (mainLineId: string) => {
-    setAppState(prev => ({ ...prev, loading: true, error: null, drillDownContent: '' }));
-    try {
-      const response = await fetch('/api/drill_down', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          main_line_index: parseInt(mainLineId),
-          transcript: appState.transcript,
-          lang: appState.language,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to perform drill down');
-      }
-
-      const data: DrillDownResponse = await response.json();
-      setAppState(prev => ({ ...prev, drillDownContent: data.long_form, loading: false }));
-    } catch (error: any) {
-      setAppState(prev => ({ ...prev, error: error.message, loading: false }));
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSubmit();
     }
-  };
-
-  const handleNoteChange = (value: string | undefined) => {
-    setAppState(prev => ({ ...prev, notes: value || '' }));
-  };
-
-  const handleLanguageChange = (lang: 'en' | 'zh') => {
-    setAppState(prev => ({ ...prev, language: lang }));
-  };
-
-  const handleInterestChange = (newInterests: { label: string; weight: number }[]) => {
-    setAppState(prev => ({ ...prev, interests: newInterests }));
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold text-center mb-8">DeepRead - 深度阅读引擎</h1>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center p-8">
+      <div className="max-w-2xl w-full">
+        {/* Logo & Title */}
+        <div className="text-center mb-12">
+          <h1 className="text-5xl font-bold text-gray-900 mb-4">
+            DeepRead
+          </h1>
+          <p className="text-xl text-gray-600">
+            {language === 'zh' ? '深度阅读引擎' : 'Deep Reading Engine'}
+          </p>
+          <p className="text-sm text-gray-500 mt-2">
+            {language === 'zh' 
+              ? 'Too Long; Didn\'t Watch - 从长视频中快速学习' 
+              : 'Too Long; Didn\'t Watch - Learn from long videos 10x faster'}
+          </p>
+        </div>
 
-        <div className="flex justify-center mb-6">
+        {/* Language Toggle */}
+        <div className="flex justify-center gap-2 mb-8">
           <Button
-            onClick={() => handleLanguageChange('zh')}
-            variant={appState.language === 'zh' ? 'default' : 'outline'}
-            className="mr-2"
+            onClick={() => setLanguage('zh')}
+            variant={language === 'zh' ? 'default' : 'outline'}
+            size="sm"
           >
             中文
           </Button>
           <Button
-            onClick={() => handleLanguageChange('en')}
-            variant={appState.language === 'en' ? 'default' : 'outline'}
+            onClick={() => setLanguage('en')}
+            variant={language === 'en' ? 'default' : 'outline'}
+            size="sm"
           >
             EN
           </Button>
         </div>
 
-        <Card className="mb-6">
+        {/* Main Input Card */}
+        <Card className="shadow-xl">
           <CardHeader>
-            <CardTitle>拉取 YouTube 字幕</CardTitle>
+            <CardTitle className="text-2xl">
+              {language === 'zh' ? '拉取 YouTube 字幕' : 'Pull YouTube Subtitles'}
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="flex gap-4 mb-4">
+          <CardContent className="space-y-4">
+            <div className="flex gap-4">
               <input
                 type="url"
-                placeholder={appState.language === 'zh' ? '粘贴 YouTube 链接...' : 'Paste YouTube URL...'}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={appState.youtubeUrl}
-                onChange={handleUrlChange}
+                placeholder={
+                  language === 'zh' 
+                    ? '粘贴 YouTube 链接...' 
+                    : 'Paste YouTube URL here...'
+                }
+                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                value={youtubeUrl}
+                onChange={(e) => setYoutubeUrl(e.target.value)}
+                onKeyPress={handleKeyPress}
               />
-              <Button onClick={handleFetchTranscript} disabled={appState.loading}>
-                {appState.loading
-                  ? (appState.language === 'zh' ? '加载中...' : 'Loading...')
-                  : (appState.language === 'zh' ? '拉取字幕' : 'Pull Subtitles')}
+              <Button 
+                onClick={handleSubmit}
+                size="lg"
+                className="px-8"
+              >
+                {language === 'zh' ? '拉取字幕' : 'Pull Subtitles'}
               </Button>
             </div>
-            {appState.error && (
-              <p className="text-red-500 text-sm mt-2">{appState.error}</p>
+
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-red-600 text-sm">{error}</p>
+              </div>
             )}
-            {appState.transcript.length > 0 && (
-              <Badge variant="secondary" className="mt-2">
-                {appState.language === 'zh' ? `已拉取 ${appState.transcript.length} 段字幕` : `Fetched ${appState.transcript.length} segments`}
-              </Badge>
-            )}
+
+            {/* Example */}
+            <div className="pt-4 border-t border-gray-200">
+              <p className="text-xs text-gray-500 mb-2">
+                {language === 'zh' ? '示例：' : 'Example:'}
+              </p>
+              <button
+                onClick={() => setYoutubeUrl('https://www.youtube.com/watch?v=7xTGNNLPyMI')}
+                className="text-xs text-blue-600 hover:underline"
+              >
+                https://www.youtube.com/watch?v=7xTGNNLPyMI
+              </button>
+            </div>
           </CardContent>
         </Card>
 
-        {appState.transcript.length > 0 && (
-          <>
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle>兴趣权重</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <InterestSlider
-                  interests={appState.interests}
-                  onInterestsChange={handleInterestChange}
-                  language={appState.language}
-                />
-                <Button onClick={handleAnalyze} disabled={appState.loading} className="mt-4">
-                  {appState.loading
-                    ? (appState.language === 'zh' ? '分析中...' : 'Analyzing...')
-                    : (appState.language === 'zh' ? '开始分析' : 'Start Analysis')}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {appState.mainLines.length > 0 && (
-              <Tabs defaultValue="main-lines" className="mb-6">
-                <TabsList>
-                  <TabsTrigger value="main-lines">
-                    {appState.language === 'zh' ? '主线分析' : 'Main Lines'}
-                  </TabsTrigger>
-                  <TabsTrigger value="notes">
-                    {appState.language === 'zh' ? '深度笔记' : 'Deep Notes'}
-                  </TabsTrigger>
-                  <TabsTrigger value="flash-cards">
-                    {appState.language === 'zh' ? '复习卡片' : 'Flash Cards'}
-                  </TabsTrigger>
-                  {appState.drillDownContent && (
-                    <TabsTrigger value="drill-down">
-                      {appState.language === 'zh' ? '深挖内容' : 'Drill Down'}
-                    </TabsTrigger>
-                  )}
-                </TabsList>
-                <TabsContent value="main-lines">
-                  <MainLineCards
-                    mainLines={appState.mainLines}
-                    onDrillDown={handleDrillDown}
-                    language={appState.language}
-                  />
-                </TabsContent>
-                <TabsContent value="notes">
-                  <NoteEditor
-                    initialContent={appState.notes}
-                    onContentChange={handleNoteChange}
-                    language={appState.language}
-                  />
-                </TabsContent>
-                <TabsContent value="flash-cards">
-                  <FlashCardZone
-                    flashCards={appState.flashCards}
-                    language={appState.language}
-                  />
-                </TabsContent>
-                {appState.drillDownContent && (
-                  <TabsContent value="drill-down">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>
-                          {appState.language === 'zh' ? '深挖内容' : 'Drill Down Content'}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div
-                          className="prose dark:prose-invert max-w-none"
-                          dangerouslySetInnerHTML={{ __html: appState.drillDownContent }}
-                        />
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-                )}
-              </Tabs>
-            )}
-          </>
-        )}
+        {/* Features */}
+        <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="text-center">
+            <div className="text-3xl mb-2">🎬</div>
+            <h3 className="font-semibold text-gray-900 mb-1">
+              {language === 'zh' ? '智能提取' : 'Smart Extraction'}
+            </h3>
+            <p className="text-sm text-gray-600">
+              {language === 'zh' 
+                ? '自动提取 YouTube 视频字幕' 
+                : 'Auto-extract YouTube subtitles'}
+            </p>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl mb-2">🧠</div>
+            <h3 className="font-semibold text-gray-900 mb-1">
+              {language === 'zh' ? '深度分析' : 'Deep Analysis'}
+            </h3>
+            <p className="text-sm text-gray-600">
+              {language === 'zh' 
+                ? 'AI 驱动的内容理解' 
+                : 'AI-powered content understanding'}
+            </p>
+          </div>
+          <div className="text-center">
+            <div className="text-3xl mb-2">📝</div>
+            <h3 className="font-semibold text-gray-900 mb-1">
+              {language === 'zh' ? '笔记生成' : 'Note Generation'}
+            </h3>
+            <p className="text-sm text-gray-600">
+              {language === 'zh' 
+                ? '自动生成学习笔记' 
+                : 'Auto-generate learning notes'}
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
