@@ -37,6 +37,43 @@ async function fetchTranscriptWithPagination(videoId: string, lang: string = 'en
   let retryCount = 0;
   const MAX_RETRIES = 3;
 
+  // 首先尝试简单的单次请求
+  try {
+    console.log(`Trying simple fetch for video ${videoId}...`);
+    const simpleUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`;
+    const simpleResponse = await fetch(simpleUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+
+    if (simpleResponse.ok) {
+      const simpleData = await simpleResponse.json();
+      console.log('Simple fetch response:', JSON.stringify(simpleData, null, 2));
+      
+      if (simpleData.events && Array.isArray(simpleData.events)) {
+        const segments = simpleData.events
+          .filter((event: any) => event.segs && event.segs.length > 0)
+          .map((event: any) => {
+            const text = event.segs.map((seg: any) => seg.utf8 || '').join('').trim();
+            return {
+              text,
+              start: event.tStartMs / 1000,
+              duration: event.dDurationMs / 1000
+            };
+          })
+          .filter((segment: TranscriptSegment) => segment.text.length > 0);
+        
+        if (segments.length > 0) {
+          console.log(`Simple fetch successful: ${segments.length} segments`);
+          return segments;
+        }
+      }
+    }
+  } catch (error) {
+    console.log('Simple fetch failed, trying pagination:', error);
+  }
+
   while (hasMore && retryCount < MAX_RETRIES) {
     try {
       // 使用 YouTube 的 timedtext API，参考 Kimi 的成功方案
@@ -63,17 +100,30 @@ async function fetchTranscriptWithPagination(videoId: string, lang: string = 'en
       }
 
       // 处理返回的字幕数据
-      const segments: TranscriptSegment[] = data.events
-        .filter((event: any) => event.segs && event.segs.length > 0)
-        .map((event: any) => {
-          const text = event.segs.map((seg: any) => seg.utf8).join('').trim();
-          return {
-            text,
-            start: event.tStartMs / 1000,
-            duration: event.dDurationMs / 1000
-          };
-        })
-        .filter((segment: TranscriptSegment) => segment.text.length > 0);
+      let segments: TranscriptSegment[] = [];
+      
+      if (data.events && Array.isArray(data.events)) {
+        segments = data.events
+          .filter((event: any) => event.segs && event.segs.length > 0)
+          .map((event: any) => {
+            const text = event.segs.map((seg: any) => seg.utf8 || '').join('').trim();
+            return {
+              text,
+              start: event.tStartMs / 1000,
+              duration: event.dDurationMs / 1000
+            };
+          })
+          .filter((segment: TranscriptSegment) => segment.text.length > 0);
+      } else if (data.captions && data.captions.playerCaptionsTracklistRenderer) {
+        // 处理另一种可能的响应格式
+        const captionTracks = data.captions.playerCaptionsTracklistRenderer.captionTracks;
+        if (captionTracks && captionTracks.length > 0) {
+          // 这里需要进一步处理，暂时跳过
+          console.log('Found caption tracks but need additional processing');
+        }
+      } else {
+        console.log('Unexpected response format:', JSON.stringify(data, null, 2));
+      }
 
       if (segments.length === 0) {
         console.log('No valid segments in this chunk, stopping pagination');
