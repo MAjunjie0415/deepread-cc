@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { YoutubeTranscript } from 'youtube-transcript';
 
 function formatTimestamp(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -22,163 +23,6 @@ function extractVideoId(url: string): string | null {
     if (match) return match[1];
   }
   return null;
-}
-
-/**
- * 新方案：从 YouTube 视频页面 HTML 中提取字幕信息
- * 参考 tldw.us 的实现方式
- */
-async function fetchTranscriptFromVideoPage(videoId: string): Promise<any[]> {
-  console.log(`\n🎬 从视频页面提取字幕`);
-  console.log(`📺 视频 ID: ${videoId}`);
-
-  try {
-    // 1. 获取视频页面（完全模拟浏览器）
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    console.log(`📄 正在访问: ${videoUrl}`);
-    
-    const response = await fetch(videoUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"macOS"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-      },
-      signal: AbortSignal.timeout(20000)
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const html = await response.text();
-    console.log(`✓ 页面大小: ${(html.length / 1024).toFixed(2)} KB`);
-
-    // 2. 从 HTML 中提取 ytInitialPlayerResponse
-    // 尝试多种匹配模式
-    let playerResponseMatch = html.match(/var ytInitialPlayerResponse = ({.+?});/);
-    if (!playerResponseMatch) {
-      playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
-    }
-    if (!playerResponseMatch) {
-      playerResponseMatch = html.match(/"playerResponse":\s*"({.+?})"/);
-    }
-    
-    if (!playerResponseMatch) {
-      console.log('❌ 未找到 ytInitialPlayerResponse');
-      console.log('HTML 预览:', html.substring(0, 500));
-      throw new Error('无法从页面中提取播放器数据');
-    }
-
-    let playerResponse;
-    try {
-      playerResponse = JSON.parse(playerResponseMatch[1]);
-      console.log('✓ 成功解析 playerResponse');
-    } catch (parseError: any) {
-      console.log('❌ JSON 解析失败:', parseError.message);
-      console.log('匹配内容:', playerResponseMatch[1].substring(0, 200));
-      throw new Error('播放器数据解析失败');
-    }
-
-    // 3. 提取字幕轨道
-    const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer;
-    if (!captions || !captions.captionTracks) {
-      console.log('❌ 视频没有字幕');
-      throw new Error('视频没有可用的字幕');
-    }
-
-    const captionTracks = captions.captionTracks;
-    console.log(`✓ 找到 ${captionTracks.length} 个字幕轨道`);
-    captionTracks.forEach((track: any) => {
-      console.log(`  - ${track.name?.simpleText || track.languageCode}: ${track.languageCode}`);
-    });
-
-    // 4. 选择第一个可用的字幕轨道（通常是原始语言）
-    const captionTrack = captionTracks[0];
-    const captionUrl = captionTrack.baseUrl;
-    console.log(`✓ 使用字幕: ${captionTrack.name?.simpleText || captionTrack.languageCode}`);
-
-    // 5. 获取字幕内容（JSON3 格式，支持分页）
-    const allSegments: any[] = [];
-    let startTime = 0;
-    let pageCount = 0;
-    const MAX_PAGES = 30;
-
-    while (pageCount < MAX_PAGES) {
-      const url = `${captionUrl}&fmt=json3&t=${startTime}`;
-      console.log(`📄 第 ${pageCount + 1} 页，起始: ${startTime}s`);
-
-      const captionResponse = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'application/json',
-        },
-        signal: AbortSignal.timeout(10000)
-      });
-
-      if (!captionResponse.ok) {
-        console.log(`❌ HTTP ${captionResponse.status}`);
-        break;
-      }
-
-      const responseText = await captionResponse.text();
-      if (!responseText || responseText.trim().length === 0) {
-        console.log(`✓ 第 ${pageCount + 1} 页无数据，结束`);
-        break;
-      }
-
-      let data;
-      try {
-        data = JSON.parse(responseText);
-      } catch (e) {
-        console.log(`❌ JSON 解析失败`);
-        break;
-      }
-
-      if (!data.events || !Array.isArray(data.events) || data.events.length === 0) {
-        console.log(`✓ 第 ${pageCount + 1} 页无事件，结束`);
-        break;
-      }
-
-      const segments = data.events
-        .filter((event: any) => event.segs && event.segs.length > 0)
-        .map((event: any) => ({
-          text: event.segs.map((seg: any) => seg.utf8 || '').join('').trim(),
-          offset: event.tStartMs || 0,
-          duration: event.dDurationMs || 0
-        }))
-        .filter((seg: any) => seg.text.length > 0);
-
-      if (segments.length === 0) {
-        console.log(`✓ 第 ${pageCount + 1} 页无有效段落，结束`);
-        break;
-      }
-
-      allSegments.push(...segments);
-      console.log(`✓ 第 ${pageCount + 1} 页: +${segments.length} 段 (累计 ${allSegments.length})`);
-
-      const lastSegment = segments[segments.length - 1];
-      startTime = (lastSegment.offset + lastSegment.duration) / 1000 + 0.01;
-      pageCount++;
-    }
-
-    console.log(`✅ 成功！共 ${allSegments.length} 段字幕`);
-    return allSegments;
-
-  } catch (error: any) {
-    console.error(`❌ 错误:`, error.message);
-    throw error;
-  }
 }
 
 export async function POST(req: NextRequest) {
@@ -205,17 +49,33 @@ export async function POST(req: NextRequest) {
     console.log(`🔗 视频 ID: ${videoId}`);
     console.log(`${'='.repeat(60)}`);
 
-    // 使用新方案：从视频页面提取字幕
-    const transcript = await fetchTranscriptFromVideoPage(videoId);
+    // 直接使用 youtube-transcript 库（最简单可靠）
+    console.log('📚 使用 youtube-transcript 库');
+    
+    let transcript;
+    try {
+      transcript = await YoutubeTranscript.fetchTranscript(videoId);
+      console.log(`✅ 成功获取 ${transcript.length} 段字幕`);
+    } catch (error: any) {
+      console.error('❌ 获取失败:', error.message);
+      
+      // 如果是 "Transcript is disabled" 错误，尝试获取英文字幕
+      if (error.message.includes('Transcript is disabled')) {
+        console.log('🔄 尝试获取英文字幕...');
+        try {
+          transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' });
+          console.log(`✅ 成功获取英文字幕 ${transcript.length} 段`);
+        } catch (retryError: any) {
+          console.error('❌ 英文字幕也失败:', retryError.message);
+          throw new Error('无法获取字幕。视频可能没有启用字幕，或字幕不可用。');
+        }
+      } else {
+        throw error;
+      }
+    }
 
-    if (transcript.length === 0) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: '无法获取字幕。视频可能没有字幕或字幕已禁用。'
-        },
-        { status: 500 }
-      );
+    if (!transcript || transcript.length === 0) {
+      throw new Error('字幕为空');
     }
 
     // 格式化为统一格式
@@ -252,7 +112,7 @@ export async function POST(req: NextRequest) {
         duration_seconds: totalDuration,
         duration_formatted: formatTimestamp(totalDuration),
         timestamps_present: true,
-        source: 'youtube_video_page_extraction'
+        source: 'youtube_transcript_library'
       }
     });
 
