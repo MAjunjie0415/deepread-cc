@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// ⚠️ 重要：部署 Zeabur 后，把下面的地址替换为你的实际 Zeabur 域名
-// 例如：https://deepread-subtitle-api-xxxxx.zeabur.app/extract
-const SUBTITLE_API = process.env.SUBTITLE_API_URL || 'https://your-zeabur-domain.zeabur.app/extract';
+// Zeabur 字幕 API 地址
+const SUBTITLE_API = process.env.SUBTITLE_API_URL || 'https://deepread-subtitle-api.zeabur.app/extract';
 
 export async function POST(req: NextRequest) {
   try {
