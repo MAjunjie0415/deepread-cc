@@ -25,63 +25,104 @@ function extractVideoId(url: string): string | null {
 }
 
 /**
- * 方法1: 使用 Kimi 的成功方案 - 直接调用 YouTube timedtext API
- * 这是最直接、最可靠的方式
- * 关键：不指定语言，让 YouTube 自动返回视频的原始字幕
+ * 新方案：从 YouTube 视频页面 HTML 中提取字幕信息
+ * 参考 tldw.us 的实现方式
  */
-async function fetchWithTimedTextAPI(videoId: string, lang?: string): Promise<any[]> {
-  const allSegments: any[] = [];
-  let startTime = 0;
-  let pageCount = 0;
-  const MAX_PAGES = 20;
-
-  console.log(`\n🎬 方法1: YouTube timedtext API`);
+async function fetchTranscriptFromVideoPage(videoId: string): Promise<any[]> {
+  console.log(`\n🎬 从视频页面提取字幕`);
   console.log(`📺 视频 ID: ${videoId}`);
-  console.log(`🌐 语言: ${lang || '自动检测'}`);
 
-  while (pageCount < MAX_PAGES) {
-    try {
-      // 关键改动：如果没有指定语言，就不加 lang 参数，让 YouTube 返回默认字幕
-      const langParam = lang ? `&lang=${lang}` : '';
-      const url = `https://www.youtube.com/api/timedtext?v=${videoId}${langParam}&fmt=json3&t=${startTime}`;
+  try {
+    // 1. 获取视频页面
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    console.log(`📄 正在访问: ${videoUrl}`);
+    
+    const response = await fetch(videoUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const html = await response.text();
+    console.log(`✓ 页面大小: ${(html.length / 1024).toFixed(2)} KB`);
+
+    // 2. 从 HTML 中提取 ytInitialPlayerResponse
+    const playerResponseMatch = html.match(/var ytInitialPlayerResponse = ({.+?});/);
+    if (!playerResponseMatch) {
+      console.log('❌ 未找到 ytInitialPlayerResponse');
+      throw new Error('无法从页面中提取播放器数据');
+    }
+
+    const playerResponse = JSON.parse(playerResponseMatch[1]);
+    console.log('✓ 成功解析 playerResponse');
+
+    // 3. 提取字幕轨道
+    const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer;
+    if (!captions || !captions.captionTracks) {
+      console.log('❌ 视频没有字幕');
+      throw new Error('视频没有可用的字幕');
+    }
+
+    const captionTracks = captions.captionTracks;
+    console.log(`✓ 找到 ${captionTracks.length} 个字幕轨道`);
+    captionTracks.forEach((track: any) => {
+      console.log(`  - ${track.name?.simpleText || track.languageCode}: ${track.languageCode}`);
+    });
+
+    // 4. 选择第一个可用的字幕轨道（通常是原始语言）
+    const captionTrack = captionTracks[0];
+    const captionUrl = captionTrack.baseUrl;
+    console.log(`✓ 使用字幕: ${captionTrack.name?.simpleText || captionTrack.languageCode}`);
+
+    // 5. 获取字幕内容（JSON3 格式，支持分页）
+    const allSegments: any[] = [];
+    let startTime = 0;
+    let pageCount = 0;
+    const MAX_PAGES = 30;
+
+    while (pageCount < MAX_PAGES) {
+      const url = `${captionUrl}&fmt=json3&t=${startTime}`;
       console.log(`📄 第 ${pageCount + 1} 页，起始: ${startTime}s`);
 
-      const response = await fetch(url, {
+      const captionResponse = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'application/json',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Referer': 'https://www.youtube.com/',
         },
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(10000)
       });
 
-      if (!response.ok) {
-        console.log(`❌ HTTP ${response.status}: ${response.statusText}`);
-        const errorText = await response.text();
-        console.log(`响应内容: ${errorText.substring(0, 200)}`);
+      if (!captionResponse.ok) {
+        console.log(`❌ HTTP ${captionResponse.status}`);
         break;
       }
 
-      // 先获取文本，检查是否为空
-      const responseText = await response.text();
+      const responseText = await captionResponse.text();
       if (!responseText || responseText.trim().length === 0) {
-        console.log(`❌ 响应为空`);
+        console.log(`✓ 第 ${pageCount + 1} 页无数据，结束`);
         break;
       }
 
-      // 尝试解析 JSON
       let data;
       try {
         data = JSON.parse(responseText);
-      } catch (parseError: any) {
-        console.log(`❌ JSON 解析失败: ${parseError.message}`);
-        console.log(`响应内容: ${responseText.substring(0, 300)}`);
+      } catch (e) {
+        console.log(`❌ JSON 解析失败`);
         break;
       }
 
       if (!data.events || !Array.isArray(data.events) || data.events.length === 0) {
-        console.log(`✓ 第 ${pageCount + 1} 页无数据，结束`);
+        console.log(`✓ 第 ${pageCount + 1} 页无事件，结束`);
         break;
       }
 
@@ -105,42 +146,14 @@ async function fetchWithTimedTextAPI(videoId: string, lang?: string): Promise<an
       const lastSegment = segments[segments.length - 1];
       startTime = (lastSegment.offset + lastSegment.duration) / 1000 + 0.01;
       pageCount++;
-
-    } catch (error: any) {
-      console.error(`❌ 第 ${pageCount + 1} 页失败:`, error.message);
-      break;
     }
-  }
 
-  if (allSegments.length > 0) {
-    console.log(`✅ timedtext API 成功: ${allSegments.length} 段`);
-  }
+    console.log(`✅ 成功！共 ${allSegments.length} 段字幕`);
+    return allSegments;
 
-  return allSegments;
-}
-
-/**
- * 方法2: 使用 youtube-transcript 库（备用方案）
- * 如果直接 API 失败，使用这个库作为后备
- */
-async function fetchWithLibrary(videoId: string): Promise<any[]> {
-  console.log(`\n📚 方法2: youtube-transcript 库`);
-  
-  try {
-    const { YoutubeTranscript } = await import('youtube-transcript');
-    
-    // 不指定语言，让库自动选择
-    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
-    
-    if (transcript && transcript.length > 0) {
-      console.log(`✅ 库方法成功: ${transcript.length} 段`);
-      return transcript;
-    }
-    
-    return [];
   } catch (error: any) {
-    console.error(`❌ 库方法失败:`, error.message);
-    return [];
+    console.error(`❌ 错误:`, error.message);
+    throw error;
   }
 }
 
@@ -168,36 +181,14 @@ export async function POST(req: NextRequest) {
     console.log(`🔗 视频 ID: ${videoId}`);
     console.log(`${'='.repeat(60)}`);
 
-    let transcript: any[] = [];
-    let method = '';
-
-    // 策略1: 不指定语言，让 YouTube 自动返回原始字幕（最可靠）
-    console.log('\n🔄 策略1: 自动检测语言');
-    transcript = await fetchWithTimedTextAPI(videoId);
-    if (transcript.length > 0) {
-      method = 'youtube_timedtext_api_auto';
-    } else {
-      // 策略2: 明确指定英文
-      console.log('\n🔄 策略2: 明确指定英文');
-      transcript = await fetchWithTimedTextAPI(videoId, 'en');
-      if (transcript.length > 0) {
-        method = 'youtube_timedtext_api_en';
-      } else {
-        // 策略3: 使用 youtube-transcript 库（最后的备用）
-        console.log('\n🔄 策略3: youtube-transcript 库');
-        transcript = await fetchWithLibrary(videoId);
-        if (transcript.length > 0) {
-          method = 'youtube_transcript_library';
-        }
-      }
-    }
+    // 使用新方案：从视频页面提取字幕
+    const transcript = await fetchTranscriptFromVideoPage(videoId);
 
     if (transcript.length === 0) {
-      console.error(`\n❌ 所有方法都失败了`);
       return NextResponse.json(
         { 
           success: false, 
-          error: '无法获取字幕。可能原因：1) 视频没有字幕 2) 网络限制 3) 视频不可用'
+          error: '无法获取字幕。视频可能没有字幕或字幕已禁用。'
         },
         { status: 500 }
       );
@@ -222,7 +213,6 @@ export async function POST(req: NextRequest) {
 
     console.log(`\n${'='.repeat(60)}`);
     console.log(`✅ 成功！`);
-    console.log(`📊 方法: ${method}`);
     console.log(`📝 段落: ${formattedTranscript.length}`);
     console.log(`💬 单词: ${wordCount}`);
     console.log(`⏱️  时长: ${formatTimestamp(totalDuration)}`);
@@ -238,7 +228,7 @@ export async function POST(req: NextRequest) {
         duration_seconds: totalDuration,
         duration_formatted: formatTimestamp(totalDuration),
         timestamps_present: true,
-        source: method
+        source: 'youtube_video_page_extraction'
       }
     });
 
