@@ -30,10 +30,10 @@ export default function VideoPage() {
     return `${minutes}:${secs.toString().padStart(2, '0')}`;
   }
 
-  // 前端直接获取字幕 - 使用 CORS 代理
+  // 前端直接获取字幕 - 尝试多个 CORS 代理
   const fetchTranscriptFromFrontend = async () => {
     console.log('\n' + '='.repeat(60));
-    console.log('🎯 前端获取字幕 - 使用 CORS 代理');
+    console.log('🎯 前端获取字幕 - 尝试多个 CORS 代理');
     console.log('📹 视频 ID:', videoId);
     console.log('='.repeat(60));
 
@@ -41,59 +41,101 @@ export default function VideoPage() {
     setError(null);
     setFetchMethod('前端 CORS 代理');
 
-    try {
-      // 直接使用 YouTube 的 timedtext API + CORS 代理
-      const corsProxy = 'https://api.allorigins.win/raw?url=';
-      const youtubeUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`;
-      const finalUrl = `${corsProxy}${encodeURIComponent(youtubeUrl)}`;
+    // 多个 CORS 代理列表
+    const corsProxies = [
+      'https://corsproxy.io/?',
+      'https://api.allorigins.win/raw?url=',
+      'https://cors-anywhere.herokuapp.com/',
+    ];
 
-      console.log('📥 获取字幕:', finalUrl);
+    // 尝试多种语言
+    const languageCodes = ['', 'en', 'zh', 'zh-Hans', 'zh-Hant'];
 
-      const response = await fetch(finalUrl);
+    let lastError: any = null;
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+    for (const proxy of corsProxies) {
+      for (const lang of languageCodes) {
+        try {
+          const youtubeUrl = lang 
+            ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
+            : `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`;
+          
+          const finalUrl = `${proxy}${encodeURIComponent(youtubeUrl)}`;
 
-      const data = await response.json();
+          console.log(`🔄 尝试: ${proxy.split('/')[2]} + ${lang || '自动'}`);
 
-      if (!data.events || data.events.length === 0) {
-        throw new Error('没有找到字幕数据');
-      }
+          const response = await fetch(finalUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(10000), // 10秒超时
+          });
 
-      const allSegments: TranscriptSegment[] = [];
-      let segmentId = 0;
-
-      // 解析字幕
-      for (const event of data.events) {
-        if (event.segs) {
-          const text = event.segs.map((seg: any) => seg.utf8 || '').join('').trim();
-          if (text) {
-            allSegments.push({
-              segment_id: `seg_${segmentId.toString().padStart(4, '0')}`,
-              start: event.tStartMs / 1000,
-              end: (event.tStartMs + event.dDurationMs) / 1000,
-              timestamp: formatTimestamp(event.tStartMs / 1000),
-              text: text
-            });
-            segmentId++;
+          if (!response.ok) {
+            console.log(`   ❌ HTTP ${response.status}`);
+            continue;
           }
+
+          const text = await response.text();
+          
+          if (!text || text.trim().length === 0) {
+            console.log(`   ❌ 空响应`);
+            continue;
+          }
+
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch (e) {
+            console.log(`   ❌ JSON 解析失败`);
+            continue;
+          }
+
+          if (!data.events || data.events.length === 0) {
+            console.log(`   ❌ 无字幕数据`);
+            continue;
+          }
+
+          // 成功！解析字幕
+          const allSegments: TranscriptSegment[] = [];
+          let segmentId = 0;
+
+          for (const event of data.events) {
+            if (event.segs) {
+              const text = event.segs.map((seg: any) => seg.utf8 || '').join('').trim();
+              if (text) {
+                allSegments.push({
+                  segment_id: `seg_${segmentId.toString().padStart(4, '0')}`,
+                  start: event.tStartMs / 1000,
+                  end: (event.tStartMs + event.dDurationMs) / 1000,
+                  timestamp: formatTimestamp(event.tStartMs / 1000),
+                  text: text
+                });
+                segmentId++;
+              }
+            }
+          }
+
+          if (allSegments.length > 0) {
+            console.log(`✅ 成功获取 ${allSegments.length} 段字幕`);
+            setTranscript(allSegments);
+            setError(null);
+            setFetchMethod(`${proxy.split('/')[2]} (${lang || '自动'})`);
+            setLoading(false);
+            return;
+          }
+
+        } catch (error: any) {
+          console.log(`   ❌ ${error.message}`);
+          lastError = error;
+          continue;
         }
       }
-
-      console.log(`✅ 成功获取 ${allSegments.length} 段字幕`);
-
-      setTranscript(allSegments);
-      setError(null);
-      setFetchMethod('前端 CORS 代理');
-
-    } catch (error: any) {
-      console.error('❌ 前端获取失败:', error);
-      setError(`无法获取字幕: ${error.message}。请尝试使用有字幕的视频。`);
-      setFetchMethod('');
-    } finally {
-      setLoading(false);
     }
+
+    // 所有方法都失败了
+    console.error('❌ 所有 CORS 代理都失败了');
+    setError(`无法获取字幕。可能原因：\n1) 视频没有字幕\n2) 所有 CORS 代理都被阻止\n3) 网络限制\n\n最后错误: ${lastError?.message || '未知'}`);
+    setFetchMethod('');
+    setLoading(false);
   };
 
   // 页面加载时自动获取
