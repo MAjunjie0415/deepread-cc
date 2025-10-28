@@ -267,7 +267,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Generate cache key (for future use with Vercel KV)
-    const cacheKey = `deep_reading:${crypto.SHA256(request.transcript).toString()}`;
+    // const cacheKey = `deep_reading:${crypto.SHA256(request.transcript).toString()}`;
     
     // TODO: Add Vercel KV caching here if needed
 
