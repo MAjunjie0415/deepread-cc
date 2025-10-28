@@ -57,11 +57,28 @@ async function fetchWithTimedTextAPI(videoId: string, lang?: string): Promise<an
       });
 
       if (!response.ok) {
-        console.log(`❌ HTTP ${response.status}`);
+        console.log(`❌ HTTP ${response.status}: ${response.statusText}`);
+        const errorText = await response.text();
+        console.log(`响应内容: ${errorText.substring(0, 200)}`);
         break;
       }
 
-      const data = await response.json();
+      // 先获取文本，检查是否为空
+      const responseText = await response.text();
+      if (!responseText || responseText.trim().length === 0) {
+        console.log(`❌ 响应为空`);
+        break;
+      }
+
+      // 尝试解析 JSON
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError: any) {
+        console.log(`❌ JSON 解析失败: ${parseError.message}`);
+        console.log(`响应内容: ${responseText.substring(0, 300)}`);
+        break;
+      }
 
       if (!data.events || !Array.isArray(data.events) || data.events.length === 0) {
         console.log(`✓ 第 ${pageCount + 1} 页无数据，结束`);
