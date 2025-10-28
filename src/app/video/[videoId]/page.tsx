@@ -5,7 +5,6 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { TranscriptSegment } from '@/types';
-import { ScrollArea } from '@/components/ui/scroll-area';
 
 export default function VideoPage() {
   const params = useParams();
@@ -208,25 +207,23 @@ export default function VideoPage() {
                 )}
 
                 {transcript.length > 0 && (
-                  <ScrollArea className="h-full pr-4">
-                    <div className="space-y-3">
-                      {transcript.map((segment) => (
-                        <div
-                          key={segment.segment_id}
-                          className="p-3 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors"
-                        >
-                          <div className="flex items-start gap-3">
-                            <span className="text-xs font-mono text-blue-600 mt-1 flex-shrink-0">
-                              {segment.timestamp}
-                            </span>
-                            <p className="text-sm text-gray-700 leading-relaxed">
-                              {segment.text}
-                            </p>
-                          </div>
+                  <div className="space-y-3">
+                    {transcript.map((segment) => (
+                      <div
+                        key={segment.segment_id}
+                        className="p-3 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="text-xs font-mono text-blue-600 mt-1 flex-shrink-0">
+                            {segment.timestamp}
+                          </span>
+                          <p className="text-sm text-gray-700 leading-relaxed">
+                            {segment.text}
+                          </p>
                         </div>
-                      ))}
-                    </div>
-                  </ScrollArea>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </CardContent>
             </Card>
