@@ -27,8 +27,9 @@ function extractVideoId(url: string): string | null {
 /**
  * 方法1: 使用 Kimi 的成功方案 - 直接调用 YouTube timedtext API
  * 这是最直接、最可靠的方式
+ * 关键：不指定语言，让 YouTube 自动返回视频的原始字幕
  */
-async function fetchWithTimedTextAPI(videoId: string): Promise<any[]> {
+async function fetchWithTimedTextAPI(videoId: string, lang?: string): Promise<any[]> {
   const allSegments: any[] = [];
   let startTime = 0;
   let pageCount = 0;
@@ -36,10 +37,13 @@ async function fetchWithTimedTextAPI(videoId: string): Promise<any[]> {
 
   console.log(`\n🎬 方法1: YouTube timedtext API`);
   console.log(`📺 视频 ID: ${videoId}`);
+  console.log(`🌐 语言: ${lang || '自动检测'}`);
 
   while (pageCount < MAX_PAGES) {
     try {
-      const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3&t=${startTime}`;
+      // 关键改动：如果没有指定语言，就不加 lang 参数，让 YouTube 返回默认字幕
+      const langParam = lang ? `&lang=${lang}` : '';
+      const url = `https://www.youtube.com/api/timedtext?v=${videoId}${langParam}&fmt=json3&t=${startTime}`;
       console.log(`📄 第 ${pageCount + 1} 页，起始: ${startTime}s`);
 
       const response = await fetch(url, {
@@ -150,15 +154,24 @@ export async function POST(req: NextRequest) {
     let transcript: any[] = [];
     let method = '';
 
-    // 方法1: 直接 API（Kimi 的方案）
+    // 策略1: 不指定语言，让 YouTube 自动返回原始字幕（最可靠）
+    console.log('\n🔄 策略1: 自动检测语言');
     transcript = await fetchWithTimedTextAPI(videoId);
     if (transcript.length > 0) {
-      method = 'youtube_timedtext_api';
+      method = 'youtube_timedtext_api_auto';
     } else {
-      // 方法2: 库方法（备用）
-      transcript = await fetchWithLibrary(videoId);
+      // 策略2: 明确指定英文
+      console.log('\n🔄 策略2: 明确指定英文');
+      transcript = await fetchWithTimedTextAPI(videoId, 'en');
       if (transcript.length > 0) {
-        method = 'youtube_transcript_library';
+        method = 'youtube_timedtext_api_en';
+      } else {
+        // 策略3: 使用 youtube-transcript 库（最后的备用）
+        console.log('\n🔄 策略3: youtube-transcript 库');
+        transcript = await fetchWithLibrary(videoId);
+        if (transcript.length > 0) {
+          method = 'youtube_transcript_library';
+        }
       }
     }
 
