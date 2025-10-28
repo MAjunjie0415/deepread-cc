@@ -442,9 +442,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-  // 检查是否有 DeepSeek API Key
-  if (!process.env.DEEPSEEK_API_KEY) {
-    console.log('No DeepSeek API key found, using mock data');
+  // 检查是否有 DeepSeek API Key 或是否在开发环境
+  if (!process.env.DEEPSEEK_API_KEY || process.env.NODE_ENV === 'development') {
+    console.log('No DeepSeek API key found or in development mode, using mock data');
     return NextResponse.json(mockDeepReadingResponse);
   }
 
