@@ -24,45 +24,85 @@ function extractVideoId(url: string): string | null {
   return null;
 }
 
-async function fetchTranscriptDirect(videoId: string, lang: string = 'en'): Promise<any[]> {
-  const allSegments: any[] = [];
-  let continuationToken = '';
-  let pageCount = 0;
-  const MAX_PAGES = 50; // 防止无限循环
+async function fetchWithCorsProxy(url: string): Promise<Response> {
+  // 尝试多个 CORS 代理
+  const proxies = [
+    '', // 先尝试直接访问
+    'https://corsproxy.io/?',
+    'https://api.allorigins.win/raw?url=',
+  ];
 
-  while (pageCount < MAX_PAGES) {
+  for (const proxy of proxies) {
     try {
-      // 构建 URL
-      let url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`;
-      if (continuationToken) {
-        url += `&continuation=${continuationToken}`;
-      }
-
-      console.log(`Fetching page ${pageCount + 1}, continuation: ${continuationToken ? 'yes' : 'no'}`);
-
-      const response = await fetch(url, {
+      const proxyUrl = proxy + encodeURIComponent(url);
+      console.log(`Trying ${proxy ? 'proxy' : 'direct'}: ${proxyUrl.substring(0, 100)}...`);
+      
+      const response = await fetch(proxy ? proxyUrl : url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Referer': `https://www.youtube.com/watch?v=${videoId}`
-        }
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        signal: AbortSignal.timeout(15000) // 15秒超时
       });
 
-      if (!response.ok) {
-        console.error(`HTTP ${response.status}: ${response.statusText}`);
+      if (response.ok) {
+        console.log(`Success with ${proxy ? 'proxy' : 'direct'}`);
+        return response;
+      }
+    } catch (error) {
+      console.error(`Failed with ${proxy ? 'proxy' : 'direct'}:`, error);
+    }
+  }
+
+  throw new Error('All proxy attempts failed');
+}
+
+async function fetchTranscriptFromYoutube(videoId: string, lang: string = 'en'): Promise<any[]> {
+  const allSegments: any[] = [];
+  
+  try {
+    // 首先获取视频页面以找到字幕 URL
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    console.log(`Fetching video page: ${videoUrl}`);
+    
+    const pageResponse = await fetchWithCorsProxy(videoUrl);
+    const pageHtml = await pageResponse.text();
+    
+    // 从页面中提取字幕 URL
+    const captionTracksMatch = pageHtml.match(/"captionTracks":(\[.*?\])/);
+    if (!captionTracksMatch) {
+      console.log('No caption tracks found in page HTML');
+      throw new Error('No captions available');
+    }
+
+    const captionTracks = JSON.parse(captionTracksMatch[1]);
+    console.log(`Found ${captionTracks.length} caption tracks`);
+
+    // 找到匹配语言的字幕
+    let captionUrl = null;
+    for (const track of captionTracks) {
+      if (track.languageCode === lang || track.languageCode.startsWith(lang)) {
+        captionUrl = track.baseUrl;
         break;
       }
+    }
 
-      const data = await response.json();
-      
-      if (!data.events || data.events.length === 0) {
-        console.log('No more events, stopping');
-        break;
-      }
+    // 如果没找到指定语言，使用第一个可用的
+    if (!captionUrl && captionTracks.length > 0) {
+      captionUrl = captionTracks[0].baseUrl;
+      console.log(`Using fallback language: ${captionTracks[0].languageCode}`);
+    }
 
-      // 提取字幕段
-      const segments = data.events
+    if (!captionUrl) {
+      throw new Error('No caption URL found');
+    }
+
+    // 获取字幕内容
+    console.log(`Fetching captions from: ${captionUrl.substring(0, 100)}...`);
+    const captionResponse = await fetchWithCorsProxy(captionUrl + '&fmt=json3');
+    const captionData = await captionResponse.json();
+
+    if (captionData.events && Array.isArray(captionData.events)) {
+      const segments = captionData.events
         .filter((event: any) => event.segs && event.segs.length > 0)
         .map((event: any) => ({
           text: event.segs.map((seg: any) => seg.utf8 || '').join('').trim(),
@@ -72,29 +112,18 @@ async function fetchTranscriptDirect(videoId: string, lang: string = 'en'): Prom
         .filter((seg: any) => seg.text.length > 0);
 
       allSegments.push(...segments);
-      console.log(`Page ${pageCount + 1}: ${segments.length} segments, total: ${allSegments.length}`);
-
-      // 检查是否有下一页
-      if (data.continuation) {
-        continuationToken = data.continuation;
-        pageCount++;
-        // 添加延迟避免请求过快
-        await new Promise(resolve => setTimeout(resolve, 200));
-      } else {
-        console.log('No continuation token, stopping');
-        break;
-      }
-
-    } catch (error) {
-      console.error(`Error fetching page ${pageCount + 1}:`, error);
-      break;
+      console.log(`Extracted ${segments.length} segments from captions`);
     }
+
+  } catch (error) {
+    console.error('Error fetching transcript from YouTube:', error);
+    throw error;
   }
 
   return allSegments;
 }
 
-async function fetchTranscriptWithYoutubeTranscript(videoId: string, lang: string): Promise<any[]> {
+async function fetchTranscriptWithLibrary(videoId: string, lang: string): Promise<any[]> {
   try {
     const { YoutubeTranscript } = await import('youtube-transcript');
     const transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang });
@@ -125,50 +154,59 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log(`Fetching transcript for video ID: ${videoId}, lang: ${lang}`);
+    console.log(`=== Fetching transcript for video: ${videoId}, lang: ${lang} ===`);
 
     let transcript: any[] = [];
     let method = '';
+    const errors: string[] = [];
 
-    // 方法1：直接调用 YouTube API
+    // 方法1：从 YouTube 页面提取字幕 URL
     try {
-      console.log('Trying direct YouTube API...');
-      transcript = await fetchTranscriptDirect(videoId, lang);
+      console.log('Method 1: Extracting from YouTube page...');
+      transcript = await fetchTranscriptFromYoutube(videoId, lang);
       if (transcript.length > 0) {
-        method = 'direct_youtube_api';
-        console.log(`Success with direct API: ${transcript.length} segments`);
+        method = 'youtube_page_extraction';
+        console.log(`✓ Success with page extraction: ${transcript.length} segments`);
       }
-    } catch (error) {
-      console.error('Direct API failed:', error);
+    } catch (error: any) {
+      errors.push(`Page extraction: ${error.message}`);
+      console.error('✗ Page extraction failed:', error.message);
     }
 
     // 方法2：使用 youtube-transcript 库
     if (transcript.length === 0) {
       try {
-        console.log('Trying youtube-transcript library...');
-        transcript = await fetchTranscriptWithYoutubeTranscript(videoId, lang);
+        console.log('Method 2: Using youtube-transcript library...');
+        transcript = await fetchTranscriptWithLibrary(videoId, lang);
         method = 'youtube_transcript_library';
-      } catch (error) {
-        console.error('youtube-transcript library failed:', error);
+        console.log(`✓ Success with library: ${transcript.length} segments`);
+      } catch (error: any) {
+        errors.push(`Library: ${error.message}`);
+        console.error('✗ Library failed:', error.message);
         
-        // 如果不是英文，尝试英文
+        // 尝试英文
         if (lang !== 'en') {
           try {
-            console.log('Retrying with English...');
-            transcript = await fetchTranscriptWithYoutubeTranscript(videoId, 'en');
+            console.log('Method 2b: Retrying with English...');
+            transcript = await fetchTranscriptWithLibrary(videoId, 'en');
             method = 'youtube_transcript_library_en';
-          } catch (retryError) {
-            console.error('English retry also failed:', retryError);
+            console.log(`✓ Success with English: ${transcript.length} segments`);
+          } catch (retryError: any) {
+            errors.push(`Library (EN): ${retryError.message}`);
+            console.error('✗ English retry failed:', retryError.message);
           }
         }
       }
     }
 
     if (!transcript || transcript.length === 0) {
+      console.error('=== All methods failed ===');
+      console.error('Errors:', errors);
       return NextResponse.json(
         { 
           success: false, 
-          error: 'Failed to fetch transcript. The video may not have captions, or captions are disabled.' 
+          error: 'Failed to fetch transcript. Possible reasons: 1) Video has no captions, 2) Captions are disabled, 3) Network restrictions.',
+          details: errors
         },
         { status: 404 }
       );
@@ -191,7 +229,11 @@ export async function POST(req: NextRequest) {
       ? formattedTranscript[formattedTranscript.length - 1].end
       : 0;
 
-    console.log(`Success! Method: ${method}, Segments: ${formattedTranscript.length}, Words: ${wordCount}, Duration: ${formatTimestamp(totalDuration)}`);
+    console.log(`=== SUCCESS ===`);
+    console.log(`Method: ${method}`);
+    console.log(`Segments: ${formattedTranscript.length}`);
+    console.log(`Words: ${wordCount}`);
+    console.log(`Duration: ${formatTimestamp(totalDuration)}`);
 
     return NextResponse.json({
       success: true,
@@ -208,7 +250,7 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('API Error:', error);
+    console.error('=== API Error ===', error);
     return NextResponse.json(
       { success: false, error: error.message || '服务器错误，请稍后重试' },
       { status: 500 }
