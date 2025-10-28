@@ -56,7 +56,7 @@ async function fetchWithCorsProxy(url: string): Promise<Response> {
   throw new Error('All proxy attempts failed');
 }
 
-async function fetchTranscriptFromYoutube(videoId: string, lang: string = 'en'): Promise<any[]> {
+async function fetchTranscriptFromYoutube(videoId: string, preferredLang?: string): Promise<any[]> {
   const allSegments: any[] = [];
   
   try {
@@ -75,21 +75,29 @@ async function fetchTranscriptFromYoutube(videoId: string, lang: string = 'en'):
     }
 
     const captionTracks = JSON.parse(captionTracksMatch[1]);
-    console.log(`Found ${captionTracks.length} caption tracks`);
+    console.log(`Found ${captionTracks.length} caption tracks:`, captionTracks.map((t: any) => t.languageCode).join(', '));
 
-    // 找到匹配语言的字幕
+    // 优先使用第一个可用的字幕（通常是视频的原始语言）
     let captionUrl = null;
-    for (const track of captionTracks) {
-      if (track.languageCode === lang || track.languageCode.startsWith(lang)) {
-        captionUrl = track.baseUrl;
-        break;
+    let selectedLang = '';
+    
+    // 如果指定了语言，先尝试找到匹配的
+    if (preferredLang) {
+      for (const track of captionTracks) {
+        if (track.languageCode === preferredLang || track.languageCode.startsWith(preferredLang)) {
+          captionUrl = track.baseUrl;
+          selectedLang = track.languageCode;
+          console.log(`Found preferred language: ${selectedLang}`);
+          break;
+        }
       }
     }
 
-    // 如果没找到指定语言，使用第一个可用的
+    // 如果没找到指定语言或没有指定语言，使用第一个可用的（通常是原始语言）
     if (!captionUrl && captionTracks.length > 0) {
       captionUrl = captionTracks[0].baseUrl;
-      console.log(`Using fallback language: ${captionTracks[0].languageCode}`);
+      selectedLang = captionTracks[0].languageCode;
+      console.log(`Using first available language: ${selectedLang}`);
     }
 
     if (!captionUrl) {
@@ -123,10 +131,12 @@ async function fetchTranscriptFromYoutube(videoId: string, lang: string = 'en'):
   return allSegments;
 }
 
-async function fetchTranscriptWithLibrary(videoId: string, lang: string): Promise<any[]> {
+async function fetchTranscriptWithLibrary(videoId: string, lang?: string): Promise<any[]> {
   try {
     const { YoutubeTranscript } = await import('youtube-transcript');
-    const transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang });
+    // 如果指定了语言，使用指定语言；否则让库自动选择
+    const options = lang ? { lang } : {};
+    const transcript = await YoutubeTranscript.fetchTranscript(videoId, options);
     console.log(`youtube-transcript library: ${transcript.length} segments`);
     return transcript;
   } catch (error) {
@@ -160,41 +170,39 @@ export async function POST(req: NextRequest) {
     let method = '';
     const errors: string[] = [];
 
-    // 方法1：从 YouTube 页面提取字幕 URL
+    // 方法1：从 YouTube 页面提取字幕 URL（不指定语言，使用原始语言）
     try {
-      console.log('Method 1: Extracting from YouTube page...');
-      transcript = await fetchTranscriptFromYoutube(videoId, lang);
+      console.log('Method 1: Extracting from YouTube page (auto language)...');
+      transcript = await fetchTranscriptFromYoutube(videoId);
       if (transcript.length > 0) {
         method = 'youtube_page_extraction';
         console.log(`✓ Success with page extraction: ${transcript.length} segments`);
       }
     } catch (error: any) {
-      errors.push(`Page extraction: ${error.message}`);
-      console.error('✗ Page extraction failed:', error.message);
+      errors.push(`Page extraction (auto): ${error.message}`);
+      console.error('✗ Page extraction (auto) failed:', error.message);
     }
 
-    // 方法2：使用 youtube-transcript 库
+    // 方法2：使用 youtube-transcript 库（不指定语言，让库自动选择）
     if (transcript.length === 0) {
       try {
-        console.log('Method 2: Using youtube-transcript library...');
-        transcript = await fetchTranscriptWithLibrary(videoId, lang);
-        method = 'youtube_transcript_library';
-        console.log(`✓ Success with library: ${transcript.length} segments`);
+        console.log('Method 2: Using youtube-transcript library (auto language)...');
+        transcript = await fetchTranscriptWithLibrary(videoId);
+        method = 'youtube_transcript_library_auto';
+        console.log(`✓ Success with library (auto): ${transcript.length} segments`);
       } catch (error: any) {
-        errors.push(`Library: ${error.message}`);
-        console.error('✗ Library failed:', error.message);
+        errors.push(`Library (auto): ${error.message}`);
+        console.error('✗ Library (auto) failed:', error.message);
         
-        // 尝试英文
-        if (lang !== 'en') {
-          try {
-            console.log('Method 2b: Retrying with English...');
-            transcript = await fetchTranscriptWithLibrary(videoId, 'en');
-            method = 'youtube_transcript_library_en';
-            console.log(`✓ Success with English: ${transcript.length} segments`);
-          } catch (retryError: any) {
-            errors.push(`Library (EN): ${retryError.message}`);
-            console.error('✗ English retry failed:', retryError.message);
-          }
+        // 方法3：明确尝试英文
+        try {
+          console.log('Method 3: Trying explicit English...');
+          transcript = await fetchTranscriptWithLibrary(videoId, 'en');
+          method = 'youtube_transcript_library_en';
+          console.log(`✓ Success with explicit English: ${transcript.length} segments`);
+        } catch (retryError: any) {
+          errors.push(`Library (EN): ${retryError.message}`);
+          console.error('✗ Explicit English failed:', retryError.message);
         }
       }
     }
