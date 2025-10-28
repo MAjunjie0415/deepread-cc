@@ -1,7 +1,9 @@
 {
   "name": "deepread-cc",
-  "version": "0.1.0",
-  "private": true,
+  "description": "A deep reading engine for YouTube transcripts powered by DeepSeek AI",
+  "keywords": ["youtube", "transcript", "ai", "deepseek", "nextjs", "analysis"],
+  "author": "Your Name",
+  "license": "MIT",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

@@ -4,15 +4,15 @@ import { useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 
 interface NoteEditorProps {
-  value: string;
-  onChange: (value: string) => void;
-  height?: string;
+  initialContent: string;
+  onContentChange: (value: string | undefined) => void;
+  language: 'en' | 'zh';
 }
 
 export function NoteEditor({ 
-  value, 
-  onChange, 
-  height = "400px" 
+  initialContent, 
+  onContentChange, 
+  language
 }: NoteEditorProps) {
   const editorRef = useRef<any>(null);
 
@@ -48,7 +48,7 @@ export function NoteEditor({
   };
 
   const handleEditorChange = (value: string | undefined) => {
-    onChange(value || '');
+    onContentChange(value);
   };
 
   return (
@@ -57,10 +57,10 @@ export function NoteEditor({
         Markdown Editor • Auto-saved to localStorage
       </div>
       <Editor
-        height={height}
+        height="400px"
         language="markdown"
         theme="vs-light"
-        value={value}
+        value={initialContent}
         onChange={handleEditorChange}
         onMount={handleEditorDidMount}
         options={{

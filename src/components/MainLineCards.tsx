@@ -7,17 +7,15 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { MainLine } from '@/types';
 
 interface MainLineCardsProps {
-  lines: MainLine[];
-  onDrillDown: (id: number) => void;
-  isDrillingDown?: boolean;
-  selectedMainLine?: number | null;
+  mainLines: MainLine[];
+  onDrillDown: (id: string) => void;
+  language: 'en' | 'zh';
 }
 
 export function MainLineCards({ 
-  lines, 
+  mainLines, 
   onDrillDown, 
-  isDrillingDown = false,
-  selectedMainLine = null
+  language
 }: MainLineCardsProps) {
   const getScoreVariant = (score: number) => {
     if (score >= 80) return 'default';
@@ -33,7 +31,7 @@ export function MainLineCards({
 
   return (
     <div className="space-y-4">
-      {lines.map((line) => (
+      {mainLines.map((line) => (
         <Card key={line.id} className="transition-all hover:shadow-md">
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -111,25 +109,16 @@ export function MainLineCards({
           
           <CardFooter>
             <Button 
-              onClick={() => onDrillDown(line.id)}
-              disabled={isDrillingDown}
+              onClick={() => onDrillDown(line.id.toString())}
               className="w-full"
-              variant={selectedMainLine === line.id ? "default" : "outline"}
             >
-              {isDrillingDown && selectedMainLine === line.id ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                  Deep Diving...
-                </>
-              ) : (
-                'Deep Dive This Line'
-              )}
+              {language === 'zh' ? '深挖这条主线' : 'Deep Dive This Line'}
             </Button>
           </CardFooter>
         </Card>
       ))}
       
-      {lines.length === 0 && (
+      {mainLines.length === 0 && (
         <div className="text-center py-8 text-gray-500">
           No main lines found. Try analyzing a transcript first.
         </div>

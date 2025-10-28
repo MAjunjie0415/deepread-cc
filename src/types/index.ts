@@ -74,29 +74,16 @@ export interface AppState {
   // URL and transcript
   youtubeUrl: string;
   transcript: TranscriptSegment[];
-  isPullingTranscript: boolean;
-  
-  // Interests and configuration
-  interests: Interest[];
-  maxMainLines: number;
-  scoringWeights: {
-    relevance: number;
-    novelty: number;
-    actionability: number;
-    credibility: number;
-  };
   
   // Analysis results
-  deepReadingResult: DeepReadingResponse | null;
-  isAnalyzing: boolean;
-  
-  // Notes and drill down
-  humanNote: string;
-  drillDownResult: DrillDownResponse | null;
-  isDrillingDown: boolean;
+  mainLines: MainLine[];
+  notes: string;
+  flashCards: FlashCard[];
+  drillDownContent: string;
   
   // UI state
-  selectedMainLine: number | null;
-  activeTab: 'flashcards' | 'segments' | 'questions';
-  lang: 'en' | 'zh';
+  loading: boolean;
+  error: string | null;
+  language: 'en' | 'zh';
+  interests: Interest[];
 }

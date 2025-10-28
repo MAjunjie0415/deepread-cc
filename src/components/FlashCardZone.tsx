@@ -7,7 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { FlashCard } from '@/types';
 
 interface FlashCardZoneProps {
-  cards: FlashCard[];
+  flashCards: FlashCard[];
+  language: 'en' | 'zh';
 }
 
 interface CardStats {
@@ -16,7 +17,7 @@ interface CardStats {
   skipped: number;
 }
 
-export function FlashCardZone({ cards }: FlashCardZoneProps) {
+export function FlashCardZone({ flashCards, language }: FlashCardZoneProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [stats, setStats] = useState<CardStats>({ correct: 0, incorrect: 0, skipped: 0 });
@@ -25,16 +26,16 @@ export function FlashCardZone({ cards }: FlashCardZoneProps) {
 
   // Shuffle cards on mount
   useEffect(() => {
-    if (cards.length > 0 && !isShuffled) {
+    if (flashCards.length > 0 && !isShuffled) {
       // Fisher-Yates shuffle
-      const shuffled = [...cards];
+      const shuffled = [...flashCards];
       for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
       setIsShuffled(true);
     }
-  }, [cards, isShuffled]);
+  }, [flashCards, isShuffled]);
 
   const handleNext = (isCorrect: boolean) => {
     const newStats = { ...stats };
@@ -47,7 +48,7 @@ export function FlashCardZone({ cards }: FlashCardZoneProps) {
     setCompletedCards(prev => new Set([...prev, currentIndex]));
     
     // Move to next card
-    const nextIndex = (currentIndex + 1) % cards.length;
+    const nextIndex = (currentIndex + 1) % flashCards.length;
     setCurrentIndex(nextIndex);
     setShowAnswer(false);
   };
@@ -56,7 +57,7 @@ export function FlashCardZone({ cards }: FlashCardZoneProps) {
     setStats(prev => ({ ...prev, skipped: prev.skipped + 1 }));
     setCompletedCards(prev => new Set([...prev, currentIndex]));
     
-    const nextIndex = (currentIndex + 1) % cards.length;
+    const nextIndex = (currentIndex + 1) % flashCards.length;
     setCurrentIndex(nextIndex);
     setShowAnswer(false);
   };
@@ -69,7 +70,7 @@ export function FlashCardZone({ cards }: FlashCardZoneProps) {
     setIsShuffled(false);
   };
 
-  if (cards.length === 0) {
+  if (flashCards.length === 0) {
     return (
       <div className="text-center py-8 text-gray-500">
         No flashcards available. Analyze a transcript first.
@@ -77,8 +78,8 @@ export function FlashCardZone({ cards }: FlashCardZoneProps) {
     );
   }
 
-  const currentCard = cards[currentIndex];
-  const progress = ((currentIndex + 1) / cards.length) * 100;
+  const currentCard = flashCards[currentIndex];
+  const progress = ((currentIndex + 1) / flashCards.length) * 100;
   const accuracy = stats.correct + stats.incorrect > 0 
     ? (stats.correct / (stats.correct + stats.incorrect)) * 100 
     : 0;
@@ -88,7 +89,7 @@ export function FlashCardZone({ cards }: FlashCardZoneProps) {
       {/* Progress and Stats */}
       <div className="flex justify-between items-center text-sm text-gray-600">
         <div>
-          Card {currentIndex + 1} of {cards.length}
+          Card {currentIndex + 1} of {flashCards.length}
         </div>
         <div className="flex gap-4">
           <span className="text-green-600">✓ {stats.correct}</span>
@@ -167,7 +168,7 @@ export function FlashCardZone({ cards }: FlashCardZoneProps) {
             </div>
             <div>
               <div className="text-gray-600">Completed</div>
-              <div className="font-medium">{completedCards.size} / {cards.length}</div>
+              <div className="font-medium">{completedCards.size} / {flashCards.length}</div>
             </div>
           </div>
           <Button 

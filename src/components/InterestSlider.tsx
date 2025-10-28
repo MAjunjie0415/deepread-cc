@@ -5,14 +5,15 @@ import { Interest } from '@/types';
 
 interface InterestSliderProps {
   interests: Interest[];
-  onChange: (interests: Interest[]) => void;
+  onInterestsChange: (interests: Interest[]) => void;
+  language: 'en' | 'zh';
 }
 
-export function InterestSlider({ interests, onChange }: InterestSliderProps) {
+export function InterestSlider({ interests, onInterestsChange }: InterestSliderProps) {
   const updateWeight = (index: number, weight: number) => {
     const updated = [...interests];
     updated[index].weight = weight;
-    onChange(updated);
+    onInterestsChange(updated);
   };
 
   const getScoreColor = (weight: number) => {
