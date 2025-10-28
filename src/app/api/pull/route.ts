@@ -33,20 +33,28 @@ async function fetchTranscriptFromVideoPage(videoId: string): Promise<any[]> {
   console.log(`📺 视频 ID: ${videoId}`);
 
   try {
-    // 1. 获取视频页面
+    // 1. 获取视频页面（完全模拟浏览器）
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     console.log(`📄 正在访问: ${videoUrl}`);
     
     const response = await fetch(videoUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
         'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"macOS"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
         'Upgrade-Insecure-Requests': '1',
       },
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(20000)
     });
 
     if (!response.ok) {
@@ -57,14 +65,30 @@ async function fetchTranscriptFromVideoPage(videoId: string): Promise<any[]> {
     console.log(`✓ 页面大小: ${(html.length / 1024).toFixed(2)} KB`);
 
     // 2. 从 HTML 中提取 ytInitialPlayerResponse
-    const playerResponseMatch = html.match(/var ytInitialPlayerResponse = ({.+?});/);
+    // 尝试多种匹配模式
+    let playerResponseMatch = html.match(/var ytInitialPlayerResponse = ({.+?});/);
+    if (!playerResponseMatch) {
+      playerResponseMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
+    }
+    if (!playerResponseMatch) {
+      playerResponseMatch = html.match(/"playerResponse":\s*"({.+?})"/);
+    }
+    
     if (!playerResponseMatch) {
       console.log('❌ 未找到 ytInitialPlayerResponse');
+      console.log('HTML 预览:', html.substring(0, 500));
       throw new Error('无法从页面中提取播放器数据');
     }
 
-    const playerResponse = JSON.parse(playerResponseMatch[1]);
-    console.log('✓ 成功解析 playerResponse');
+    let playerResponse;
+    try {
+      playerResponse = JSON.parse(playerResponseMatch[1]);
+      console.log('✓ 成功解析 playerResponse');
+    } catch (parseError: any) {
+      console.log('❌ JSON 解析失败:', parseError.message);
+      console.log('匹配内容:', playerResponseMatch[1].substring(0, 200));
+      throw new Error('播放器数据解析失败');
+    }
 
     // 3. 提取字幕轨道
     const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer;
