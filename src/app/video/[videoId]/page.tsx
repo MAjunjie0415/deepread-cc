@@ -165,8 +165,8 @@ export default function VideoPage() {
   }
 
   useEffect(() => {
-    // 页面加载时尝试前端获取
-    fetchTranscriptFromFrontend();
+    // 页面加载时优先尝试后端 API
+    fetchTranscriptFromBackend();
   }, [videoId]);
 
   return (
