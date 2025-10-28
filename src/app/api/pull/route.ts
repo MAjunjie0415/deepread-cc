@@ -54,8 +54,7 @@ export async function POST(req: NextRequest) {
     for (const language of languages) {
       try {
         transcript = await YoutubeTranscript.fetchTranscript(videoId, {
-          lang: language,
-          country: 'US'
+          lang: language
         });
         console.log(`Successfully fetched transcript in ${language}`);
         break;
