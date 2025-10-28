@@ -1,125 +1,108 @@
-// 测试脚本：验证能否获取 YouTube 字幕
-const https = require('https');
+/**
+ * 测试 YouTube 字幕抓取
+ * 视频: https://www.youtube.com/watch?v=7xTGNNLPyMI
+ */
 
 const videoId = '7xTGNNLPyMI';
 
-console.log('🎬 测试视频:', videoId);
-console.log('🔗 URL: https://www.youtube.com/watch?v=' + videoId);
-console.log('\n' + '='.repeat(60));
-
-// 方法1: 不指定语言，让 YouTube 返回默认字幕
-console.log('\n📝 方法1: 不指定语言（自动选择）');
-const url1 = `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`;
-console.log('URL:', url1);
-
-https.get(url1, {
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'application/json',
-  }
-}, (res) => {
-  let data = '';
+async function testYouTubeInnerTubeAPI() {
+  console.log('\n='.repeat(60));
+  console.log('🎯 测试 YouTube InnerTube API');
+  console.log('='.repeat(60));
   
-  res.on('data', (chunk) => {
-    data += chunk;
-  });
+  const url = 'https://www.youtube.com/youtubei/v1/get_transcript?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
   
-  res.on('end', () => {
-    if (res.statusCode === 200) {
-      try {
-        const json = JSON.parse(data);
-        if (json.events && json.events.length > 0) {
-          const segments = json.events.filter(e => e.segs && e.segs.length > 0);
-          console.log(`✅ 成功！获取到 ${segments.length} 段字幕`);
-          console.log('\n前3段内容：');
-          segments.slice(0, 3).forEach((event, i) => {
-            const text = event.segs.map(s => s.utf8 || '').join('').trim();
-            const time = (event.tStartMs / 1000).toFixed(2);
-            console.log(`  ${i + 1}. [${time}s] ${text}`);
-          });
-        } else {
-          console.log('❌ 响应中没有字幕数据');
-        }
-      } catch (e) {
-        console.log('❌ JSON 解析失败:', e.message);
-        console.log('响应内容:', data.substring(0, 200));
+  const body = {
+    context: {
+      client: {
+        clientName: 'WEB',
+        clientVersion: '2.20240304.00.00'
       }
-    } else {
-      console.log(`❌ HTTP ${res.statusCode}`);
-      console.log('响应:', data.substring(0, 200));
+    },
+    params: Buffer.from(`\n\x0b${videoId}`).toString('base64')
+  };
+  
+  console.log('📡 请求 URL:', url);
+  console.log('📦 请求参数:', JSON.stringify(body, null, 2));
+  
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      body: JSON.stringify(body)
+    });
+    
+    console.log('📊 响应状态:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ 错误响应:', errorText.substring(0, 500));
+      return null;
     }
     
-    // 方法2: 明确指定英文
-    console.log('\n' + '='.repeat(60));
-    console.log('\n📝 方法2: 明确指定英文 (lang=en)');
-    const url2 = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3`;
-    console.log('URL:', url2);
+    const data = await response.json();
+    console.log('✅ 成功获取数据');
     
-    https.get(url2, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json',
-      }
-    }, (res2) => {
-      let data2 = '';
+    // 解析字幕
+    if (data.actions && data.actions[0]?.updateEngagementPanelAction) {
+      const content = data.actions[0].updateEngagementPanelAction.content;
+      const transcriptRenderer = content?.transcriptRenderer?.content?.transcriptSearchPanelRenderer;
       
-      res2.on('data', (chunk) => {
-        data2 += chunk;
-      });
-      
-      res2.on('end', () => {
-        if (res2.statusCode === 200) {
-          try {
-            const json = JSON.parse(data2);
-            if (json.events && json.events.length > 0) {
-              const segments = json.events.filter(e => e.segs && e.segs.length > 0);
-              console.log(`✅ 成功！获取到 ${segments.length} 段字幕`);
-              console.log('\n前3段内容：');
-              segments.slice(0, 3).forEach((event, i) => {
-                const text = event.segs.map(s => s.utf8 || '').join('').trim();
-                const time = (event.tStartMs / 1000).toFixed(2);
-                console.log(`  ${i + 1}. [${time}s] ${text}`);
-              });
-            } else {
-              console.log('❌ 响应中没有字幕数据');
-            }
-          } catch (e) {
-            console.log('❌ JSON 解析失败:', e.message);
-            console.log('响应内容:', data2.substring(0, 200));
-          }
-        } else {
-          console.log(`❌ HTTP ${res2.statusCode}`);
-          console.log('响应:', data2.substring(0, 200));
-        }
+      if (transcriptRenderer?.body?.transcriptSegmentListRenderer?.initialSegments) {
+        const segments = transcriptRenderer.body.transcriptSegmentListRenderer.initialSegments;
+        const transcript = segments.map((seg) => {
+          const snippet = seg.transcriptSegmentRenderer?.snippet?.runs?.[0]?.text || '';
+          const startMs = parseInt(seg.transcriptSegmentRenderer?.startMs || '0');
+          const endMs = parseInt(seg.transcriptSegmentRenderer?.endMs || '0');
+          
+          return {
+            text: snippet,
+            start: startMs / 1000,
+            duration: (endMs - startMs) / 1000
+          };
+        }).filter((seg) => seg.text.length > 0);
         
-        // 方法3: 使用 youtube-transcript 库
         console.log('\n' + '='.repeat(60));
-        console.log('\n📝 方法3: youtube-transcript 库');
+        console.log('📝 字幕统计:');
+        console.log('   总段落数:', transcript.length);
+        console.log('   总时长:', Math.floor(transcript[transcript.length - 1].start / 60), '分钟');
+        console.log('   总字数:', transcript.reduce((sum, seg) => sum + seg.text.split(/\s+/).length, 0));
+        console.log('='.repeat(60));
         
-        (async () => {
-          try {
-            const { YoutubeTranscript } = require('youtube-transcript');
-            const transcript = await YoutubeTranscript.fetchTranscript(videoId);
-            console.log(`✅ 成功！获取到 ${transcript.length} 段字幕`);
-            console.log('\n前3段内容：');
-            transcript.slice(0, 3).forEach((item, i) => {
-              const time = (item.offset / 1000).toFixed(2);
-              console.log(`  ${i + 1}. [${time}s] ${item.text}`);
-            });
-            console.log('\n' + '='.repeat(60));
-            console.log('✅ 测试完成！');
-          } catch (error) {
-            console.log('❌ 库方法失败:', error.message);
-            console.log('\n' + '='.repeat(60));
-            console.log('❌ 所有方法都失败了');
-          }
-        })();
-      });
-    }).on('error', (e) => {
-      console.log('❌ 请求失败:', e.message);
-    });
-  });
-}).on('error', (e) => {
-  console.log('❌ 请求失败:', e.message);
-});
+        console.log('\n📄 前 10 段字幕预览:');
+        transcript.slice(0, 10).forEach((seg, i) => {
+          const time = `${Math.floor(seg.start / 60)}:${String(Math.floor(seg.start % 60)).padStart(2, '0')}`;
+          console.log(`${i + 1}. [${time}] ${seg.text}`);
+        });
+        
+        console.log('\n📄 最后 5 段字幕预览:');
+        transcript.slice(-5).forEach((seg, i) => {
+          const time = `${Math.floor(seg.start / 60)}:${String(Math.floor(seg.start % 60)).padStart(2, '0')}`;
+          console.log(`${transcript.length - 5 + i + 1}. [${time}] ${seg.text}`);
+        });
+        
+        return transcript;
+      }
+    }
+    
+    console.error('❌ 响应格式不符合预期');
+    console.log('响应结构:', JSON.stringify(data, null, 2).substring(0, 1000));
+    return null;
+    
+  } catch (error) {
+    console.error('❌ 请求失败:', error.message);
+    return null;
+  }
+}
 
+// 运行测试
+testYouTubeInnerTubeAPI().then(transcript => {
+  if (transcript) {
+    console.log('\n✅ 测试成功！');
+  } else {
+    console.log('\n❌ 测试失败！');
+  }
+});
