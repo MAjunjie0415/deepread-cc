@@ -25,49 +25,45 @@ function extractVideoId(url: string): string | null {
 }
 
 /**
- * 使用 Kimi 的成功方案：直接调用 YouTube timedtext API
- * 核心 URL: https://www.youtube.com/api/timedtext?v={id}&lang=en&fmt=json3
- * 无需代理，无需密钥，公开接口
+ * 方法1: 使用 Kimi 的成功方案 - 直接调用 YouTube timedtext API
+ * 这是最直接、最可靠的方式
  */
-async function fetchYoutubeTranscript(videoId: string): Promise<any[]> {
+async function fetchWithTimedTextAPI(videoId: string): Promise<any[]> {
   const allSegments: any[] = [];
   let startTime = 0;
-  let hasMore = true;
   let pageCount = 0;
-  const MAX_PAGES = 20; // 防止无限循环
+  const MAX_PAGES = 20;
 
-  console.log(`📺 开始拉取视频字幕: ${videoId}`);
+  console.log(`\n🎬 方法1: YouTube timedtext API`);
+  console.log(`📺 视频 ID: ${videoId}`);
 
-  while (hasMore && pageCount < MAX_PAGES) {
+  while (pageCount < MAX_PAGES) {
     try {
-      // Kimi 的成功方案：直接调用 timedtext API
       const url = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3&t=${startTime}`;
-      console.log(`📄 第 ${pageCount + 1} 页，起始时间: ${startTime}s`);
+      console.log(`📄 第 ${pageCount + 1} 页，起始: ${startTime}s`);
 
       const response = await fetch(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Accept': 'application/json',
           'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://www.youtube.com/',
         },
-        signal: AbortSignal.timeout(10000) // 10秒超时
+        signal: AbortSignal.timeout(15000)
       });
 
       if (!response.ok) {
-        console.error(`❌ HTTP ${response.status}: ${response.statusText}`);
+        console.log(`❌ HTTP ${response.status}`);
         break;
       }
 
       const data = await response.json();
 
-      // 检查是否有字幕数据
       if (!data.events || !Array.isArray(data.events) || data.events.length === 0) {
-        console.log(`✓ 第 ${pageCount + 1} 页无数据，分页结束`);
-        hasMore = false;
+        console.log(`✓ 第 ${pageCount + 1} 页无数据，结束`);
         break;
       }
 
-      // 提取字幕段落
       const segments = data.events
         .filter((event: any) => event.segs && event.segs.length > 0)
         .map((event: any) => ({
@@ -78,15 +74,13 @@ async function fetchYoutubeTranscript(videoId: string): Promise<any[]> {
         .filter((seg: any) => seg.text.length > 0);
 
       if (segments.length === 0) {
-        console.log(`✓ 第 ${pageCount + 1} 页无有效段落，分页结束`);
-        hasMore = false;
+        console.log(`✓ 第 ${pageCount + 1} 页无有效段落，结束`);
         break;
       }
 
       allSegments.push(...segments);
-      console.log(`✓ 第 ${pageCount + 1} 页: ${segments.length} 段，累计 ${allSegments.length} 段`);
+      console.log(`✓ 第 ${pageCount + 1} 页: +${segments.length} 段 (累计 ${allSegments.length})`);
 
-      // 计算下一页的起始时间（Kimi 的分页逻辑）
       const lastSegment = segments[segments.length - 1];
       startTime = (lastSegment.offset + lastSegment.duration) / 1000 + 0.01;
       pageCount++;
@@ -97,12 +91,36 @@ async function fetchYoutubeTranscript(videoId: string): Promise<any[]> {
     }
   }
 
-  if (allSegments.length === 0) {
-    throw new Error('未找到字幕数据，视频可能没有启用字幕');
+  if (allSegments.length > 0) {
+    console.log(`✅ timedtext API 成功: ${allSegments.length} 段`);
   }
 
-  console.log(`✅ 拉取完成: ${allSegments.length} 段字幕，${pageCount} 页`);
   return allSegments;
+}
+
+/**
+ * 方法2: 使用 youtube-transcript 库（备用方案）
+ * 如果直接 API 失败，使用这个库作为后备
+ */
+async function fetchWithLibrary(videoId: string): Promise<any[]> {
+  console.log(`\n📚 方法2: youtube-transcript 库`);
+  
+  try {
+    const { YoutubeTranscript } = await import('youtube-transcript');
+    
+    // 不指定语言，让库自动选择
+    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
+    
+    if (transcript && transcript.length > 0) {
+      console.log(`✅ 库方法成功: ${transcript.length} 段`);
+      return transcript;
+    }
+    
+    return [];
+  } catch (error: any) {
+    console.error(`❌ 库方法失败:`, error.message);
+    return [];
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -125,11 +143,35 @@ export async function POST(req: NextRequest) {
     }
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🎬 视频 ID: ${videoId}`);
-    console.log(`${'='.repeat(60)}\n`);
+    console.log(`🎯 开始拉取字幕`);
+    console.log(`🔗 视频 ID: ${videoId}`);
+    console.log(`${'='.repeat(60)}`);
 
-    // 使用 Kimi 的成功方案
-    const transcript = await fetchYoutubeTranscript(videoId);
+    let transcript: any[] = [];
+    let method = '';
+
+    // 方法1: 直接 API（Kimi 的方案）
+    transcript = await fetchWithTimedTextAPI(videoId);
+    if (transcript.length > 0) {
+      method = 'youtube_timedtext_api';
+    } else {
+      // 方法2: 库方法（备用）
+      transcript = await fetchWithLibrary(videoId);
+      if (transcript.length > 0) {
+        method = 'youtube_transcript_library';
+      }
+    }
+
+    if (transcript.length === 0) {
+      console.error(`\n❌ 所有方法都失败了`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: '无法获取字幕。可能原因：1) 视频没有字幕 2) 网络限制 3) 视频不可用'
+        },
+        { status: 500 }
+      );
+    }
 
     // 格式化为统一格式
     const formattedTranscript = transcript.map((segment, index) => ({
@@ -149,9 +191,10 @@ export async function POST(req: NextRequest) {
       : 0;
 
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`✅ 成功`);
-    console.log(`📊 段落数: ${formattedTranscript.length}`);
-    console.log(`📝 单词数: ${wordCount}`);
+    console.log(`✅ 成功！`);
+    console.log(`📊 方法: ${method}`);
+    console.log(`📝 段落: ${formattedTranscript.length}`);
+    console.log(`💬 单词: ${wordCount}`);
     console.log(`⏱️  时长: ${formatTimestamp(totalDuration)}`);
     console.log(`${'='.repeat(60)}\n`);
 
@@ -165,12 +208,12 @@ export async function POST(req: NextRequest) {
         duration_seconds: totalDuration,
         duration_formatted: formatTimestamp(totalDuration),
         timestamps_present: true,
-        source: 'youtube_timedtext_api'
+        source: method
       }
     });
 
   } catch (error: any) {
-    console.error('\n❌ API 错误:', error.message);
+    console.error('\n❌ API 错误:', error);
     return NextResponse.json(
       { 
         success: false, 
