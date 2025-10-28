@@ -146,6 +146,11 @@ export default function VideoPage() {
     setFetchMethod('后端 API');
 
     try {
+      const allSegments: TranscriptSegment[] = [];
+      let pageCount = 0;
+      let nextStart = 0;
+      const maxPages = 50;
+
       // 语言配置
       const languageConfigs = [
         { lang: '', name: '自动选择' },
