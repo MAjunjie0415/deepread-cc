@@ -44,11 +44,18 @@ async function fetchYouTubeTimedText(videoId: string): Promise<any[]> {
   let nextStart = 0;
   const maxPages = 50; // 防止无限循环
 
-  // 尝试多种语言
-  const languages = ['en', 'en-US', 'en-GB'];
+  // 尝试多种语言配置
+  // 1. 不指定语言（自动选择）
+  // 2. 指定具体语言
+  const languageConfigs = [
+    { lang: '', name: '自动选择' },
+    { lang: 'en', name: '英语' },
+    { lang: 'en-US', name: '美式英语' },
+    { lang: 'a.en', name: '自动生成英语' }
+  ];
   
-  for (const lang of languages) {
-    console.log(`\n🔄 尝试语言: ${lang}`);
+  for (const config of languageConfigs) {
+    console.log(`\n🔄 尝试: ${config.name} (${config.lang || '默认'})`);
     
     try {
       // 重置分页状态
@@ -60,9 +67,17 @@ async function fetchYouTubeTimedText(videoId: string): Promise<any[]> {
         pageCount++;
         
         // 构建 URL
-        const url = nextStart === 0
-          ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
-          : `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3&start=${nextStart}`;
+        let url;
+        if (config.lang === '') {
+          // 不指定语言，让 YouTube 自动选择
+          url = nextStart === 0
+            ? `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`
+            : `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3&start=${nextStart}`;
+        } else {
+          url = nextStart === 0
+            ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${config.lang}&fmt=json3`
+            : `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${config.lang}&fmt=json3&start=${nextStart}`;
+        }
         
         console.log(`📄 第 ${pageCount} 页: ${url}`);
 
@@ -79,13 +94,16 @@ async function fetchYouTubeTimedText(videoId: string): Promise<any[]> {
         if (!response.ok) {
           console.log(`❌ HTTP ${response.status}: ${response.statusText}`);
           if (response.status === 404) {
-            console.log(`⚠️  语言 ${lang} 没有字幕`);
-            break; // 尝试下一个语言
+            console.log(`⚠️  ${config.name} 没有字幕`);
+            break; // 尝试下一个配置
           }
           throw new Error(`HTTP ${response.status}`);
         }
 
         const text = await response.text();
+        
+        console.log(`   响应长度: ${text.length} 字节`);
+        console.log(`   响应内容前 200 字符: ${text.substring(0, 200)}`);
         
         if (!text || text.trim().length === 0) {
           console.log(`✓ 第 ${pageCount} 页为空，翻页结束`);
@@ -138,7 +156,7 @@ async function fetchYouTubeTimedText(videoId: string): Promise<any[]> {
       if (allSegments.length > 0) {
         console.log(`\n${'='.repeat(60)}`);
         console.log(`✅ 成功获取字幕！`);
-        console.log(`   语言: ${lang}`);
+        console.log(`   配置: ${config.name}`);
         console.log(`   总页数: ${pageCount}`);
         console.log(`   总段数: ${allSegments.length}`);
         console.log(`   时长: ${formatTimestamp(allSegments[allSegments.length - 1].start)}`);
@@ -148,12 +166,12 @@ async function fetchYouTubeTimedText(videoId: string): Promise<any[]> {
       }
 
     } catch (error: any) {
-      console.error(`❌ 语言 ${lang} 失败:`, error.message);
+      console.error(`❌ ${config.name} 失败:`, error.message);
       continue;
     }
   }
 
-  throw new Error('所有语言都无法获取字幕');
+  throw new Error('所有配置都无法获取字幕');
 }
 
 export async function POST(req: NextRequest) {
