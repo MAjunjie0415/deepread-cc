@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>YouTube API 测试</title>
+  <style>
+    body { 
+      font-family: monospace; 
+      padding: 20px; 
+      background: #1e1e1e; 
+      color: #d4d4d4; 
+    }
+    .log { 
+      background: #252526; 
+      padding: 10px; 
+      margin: 10px 0; 
+      border-radius: 4px; 
+      border-left: 3px solid #0078d4;
+    }
+    .success { border-left-color: #4ec9b0; }
+    .error { border-left-color: #f48771; }
+    button { 
+      padding: 10px 20px; 
+      margin: 5px; 
+      cursor: pointer;
+      background: #0078d4;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+    button:hover { background: #026ec1; }
+    input { 
+      padding: 8px; 
+      width: 400px; 
+      margin: 10px 0;
+      background: #3c3c3c;
+      border: 1px solid #555;
+      color: #d4d4d4;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>YouTube 字幕提取测试</h1>
+  
+  <input type="text" id="videoId" placeholder="输入视频 ID" value="RNJCfff1dPY">
+  <br>
+  
+  <button onclick="testMethod1()">测试方法1: timedtext API</button>
+  <button onclick="testMethod2()">测试方法2: 页面解析</button>
+  <button onclick="clearLogs()">清除日志</button>
+  
+  <div id="logs"></div>
+
+  <script>
+    function log(message, type = 'info') {
+      const logsDiv = document.getElementById('logs');
+      const logDiv = document.createElement('div');
+      logDiv.className = `log ${type}`;
+      logDiv.textContent = message;
+      logsDiv.appendChild(logDiv);
+      console.log(message);
+    }
+
+    function clearLogs() {
+      document.getElementById('logs').innerHTML = '';
+    }
+
+    async function testMethod1() {
+      const videoId = document.getElementById('videoId').value;
+      log('🔄 [方法1] 测试 timedtext API');
+      
+      const languages = ['', 'en', 'zh', 'a.en', 'en-US'];
+      
+      for (const lang of languages) {
+        try {
+          const url = lang 
+            ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
+            : `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`;
+          
+          log(`   尝试: ${lang || '自动'} - ${url}`);
+          
+          const response = await fetch(url, {
+            method: 'GET',
+            mode: 'no-cors' // 跨域请求
+          });
+          
+          log(`   响应: ${response.type} (no-cors 模式无法读取内容)`, 'info');
+          
+        } catch (e) {
+          log(`   ❌ 错误: ${e.message}`, 'error');
+        }
+      }
+    }
+
+    async function testMethod2() {
+      const videoId = document.getElementById('videoId').value;
+      log('🔄 [方法2] 测试页面解析');
+      
+      try {
+        const url = `https://www.youtube.com/watch?v=${videoId}`;
+        log(`   获取页面: ${url}`);
+        
+        const response = await fetch(url, {
+          method: 'GET',
+          mode: 'no-cors'
+        });
+        
+        log(`   响应: ${response.type}`, 'info');
+        log('   ⚠️  浏览器 CORS 限制，无法读取页面内容', 'error');
+        log('   💡 这就是为什么需要服务器端代理！', 'info');
+        
+      } catch (e) {
+        log(`   ❌ 错误: ${e.message}`, 'error');
+      }
+    }
+
+    // 页面加载时自动测试
+    window.onload = () => {
+      log('📋 YouTube 字幕提取测试工具');
+      log('💡 提示：浏览器直接请求会被 CORS 阻止，这就是为什么需要服务器端代理');
+      log('');
+    };
+  </script>
+</body>
+</html>
+
