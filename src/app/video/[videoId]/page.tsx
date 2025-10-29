@@ -194,24 +194,67 @@ export default function VideoPage() {
               <Card className="border-red-200 bg-red-50 shadow-lg">
                 <CardHeader>
                   <CardTitle className="text-red-700 text-lg">
-                    {language === 'zh' ? '获取字幕失败' : 'Failed to fetch transcript'}
+                    {language === 'zh' ? '自动获取字幕失败' : 'Auto-fetch failed'}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-6 pt-0">
-                  <p className="text-red-600 text-sm mb-2">❌ {error}</p>
-                  <p className="text-sm text-red-700 mb-4">
-                    {language === 'zh'
-                      ? '可能原因：1) 视频没有字幕 2) 网络限制 3) CORS 代理失败'
-                      : 'Possible reasons: 1) No captions 2) Network restriction 3) CORS proxy failed'}
-                  </p>
-                  <Button
-                    onClick={fetchTranscriptFromFrontend}
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                  >
-                    {language === 'zh' ? '🔄 重试' : '🔄 Retry'}
-                  </Button>
+                  <p className="text-red-600 text-sm mb-3">❌ {error}</p>
+                  
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                    <p className="text-sm text-yellow-800 font-medium mb-2">
+                      💡 {language === 'zh' ? '解决方案' : 'Solution'}
+                    </p>
+                    <p className="text-sm text-yellow-700">
+                      {language === 'zh' 
+                        ? '请手动下载字幕文件并上传：'
+                        : 'Please download and upload subtitle file manually:'}
+                    </p>
+                    <ol className="text-sm text-yellow-700 mt-2 ml-4 list-decimal space-y-1">
+                      <li>{language === 'zh' ? '点击视频下方的"..."按钮' : 'Click "..." below video'}</li>
+                      <li>{language === 'zh' ? '选择"显示文字记录"' : 'Select "Show transcript"'}</li>
+                      <li>{language === 'zh' ? '复制字幕文本' : 'Copy transcript text'}</li>
+                      <li>{language === 'zh' ? '粘贴到下方输入框' : 'Paste to input below'}</li>
+                    </ol>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Button
+                      onClick={fetchTranscriptFromFrontend}
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                    >
+                      {language === 'zh' ? '🔄 重试自动获取' : '🔄 Retry Auto-fetch'}
+                    </Button>
+                    
+                    <Button
+                      onClick={() => {
+                        const text = prompt(language === 'zh' 
+                          ? '请粘贴字幕文本（每行一段）：' 
+                          : 'Paste transcript text (one line per segment):');
+                        
+                        if (text) {
+                          const lines = text.split('\n').filter(l => l.trim());
+                          const segments: TranscriptSegment[] = lines.map((line, i) => ({
+                            segment_id: `seg_${i.toString().padStart(4, '0')}`,
+                            start: i * 3,
+                            end: (i + 1) * 3,
+                            timestamp: formatTimestamp(i * 3),
+                            text: line.trim()
+                          }));
+                          
+                          setTranscript(segments);
+                          setError(null);
+                          setFetchMethod('手动上传');
+                        }
+                      }}
+                      variant="default"
+                      size="sm"
+                      className="w-full bg-blue-600 hover:bg-blue-700"
+                    >
+                      {language === 'zh' ? '📝 手动粘贴字幕' : '📝 Paste Manually'}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
