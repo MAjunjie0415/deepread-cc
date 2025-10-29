@@ -2,6 +2,36 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'edge';
 
+// 使用公开的第三方字幕提取 API
+async function fetchFromThirdPartyAPI(videoId: string, lang: string = '') {
+  const apis = [
+    // API 1: yt-transcript-api (公开服务)
+    `https://yt-transcript-api.herokuapp.com/transcript?videoId=${videoId}${lang ? `&lang=${lang}` : ''}`,
+    // API 2: invidious (开源 YouTube 前端)
+    `https://invidious.io.lol/api/v1/captions/${videoId}?lang=${lang || 'en'}`,
+  ];
+
+  for (const apiUrl of apis) {
+    try {
+      console.log(`🔄 尝试第三方 API: ${apiUrl}`);
+      const response = await fetch(apiUrl, {
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`✅ 第三方 API 成功`);
+        return data;
+      }
+    } catch (e) {
+      console.log(`❌ 第三方 API 失败: ${e}`);
+      continue;
+    }
+  }
+
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const videoId = searchParams.get('v');
@@ -11,10 +41,41 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Missing video ID' }, { status: 400 });
   }
 
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`🎯 获取字幕: videoId=${videoId}, lang=${lang || 'auto'}`);
+  console.log('='.repeat(60));
+
   try {
-    // 方法 1: 尝试 YouTube 官方 timedtext API（无需 API Key）
-    console.log(`🔄 [方法1] timedtext API: videoId=${videoId}, lang=${lang || 'auto'}`);
-    
+    // 方法 1: 尝试第三方 API
+    const thirdPartyData = await fetchFromThirdPartyAPI(videoId, lang);
+    if (thirdPartyData) {
+      // 转换为我们的格式
+      let formattedData;
+      if (Array.isArray(thirdPartyData)) {
+        // yt-transcript-api 格式
+        formattedData = {
+          events: thirdPartyData.map((item: any, index: number) => ({
+            tStartMs: (item.start || item.offset || 0) * 1000,
+            dDurationMs: (item.duration || 0) * 1000,
+            segs: [{ utf8: item.text }]
+          }))
+        };
+      } else {
+        formattedData = thirdPartyData;
+      }
+
+      return NextResponse.json(formattedData, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      });
+    }
+
+    // 方法 2: 直接请求 YouTube timedtext API
+    console.log(`🔄 [方法2] timedtext API`);
     const youtubeUrl = lang
       ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
       : `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`;
@@ -32,155 +93,40 @@ export async function GET(request: NextRequest) {
     if (response.ok) {
       const data = await response.text();
       
-      // 检查是否有内容
       if (data && data.trim().length > 0) {
         try {
           const json = JSON.parse(data);
           if (json.events && json.events.length > 0) {
-            console.log(`✅ [方法1] 成功: ${json.events.length} events`);
+            console.log(`✅ [方法2] 成功`);
             return new NextResponse(data, {
               status: 200,
               headers: {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*',
-                'Cache-Control': 'public, max-age=3600', // 缓存 1 小时
+                'Cache-Control': 'public, max-age=3600',
               },
             });
           }
         } catch (e) {
-          console.log(`⚠️  [方法1] JSON 解析失败`);
+          console.log(`⚠️  JSON 解析失败`);
         }
       }
     }
 
-    console.log(`❌ [方法1] 失败: HTTP ${response.status}`);
+    console.log(`❌ [方法2] 失败: HTTP ${response.status}`);
 
-    // 方法 2: 尝试获取视频页面，提取 ytInitialPlayerResponse
-    console.log(`🔄 [方法2] 解析视频页面`);
-    
-    const videoPageUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const pageResponse = await fetch(videoPageUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.youtube.com/',
-      },
-    });
-
-    if (pageResponse.ok) {
-      const html = await pageResponse.text();
-      console.log(`📄 [方法2] 页面大小: ${html.length} 字符`);
-      
-      // 尝试多种正则表达式模式来提取 ytInitialPlayerResponse
-      const patterns = [
-        /ytInitialPlayerResponse\s*=\s*({.+?})\s*;/s,
-        /ytInitialPlayerResponse\s*=\s*({.+?})\s*<\/script>/s,
-        /"player":\s*({.+?})\s*,\s*"playerResponse"/s,
-      ];
-
-      let playerResponse = null;
-
-      for (const pattern of patterns) {
-        const match = html.match(pattern);
-        if (match) {
-          try {
-            playerResponse = JSON.parse(match[1]);
-            console.log(`✅ [方法2] 成功提取 playerResponse`);
-            break;
-          } catch (e) {
-            console.log(`⚠️  [方法2] 正则匹配但 JSON 解析失败`);
-            continue;
-          }
-        }
-      }
-
-      if (!playerResponse) {
-        console.log(`❌ [方法2] 未找到 ytInitialPlayerResponse`);
-      } else {
-        const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-        
-        if (captions && captions.length > 0) {
-          console.log(`📝 [方法2] 找到 ${captions.length} 个字幕轨道`);
-          
-          // 找到合适的字幕轨道
-          let captionUrl = null;
-          let selectedLang = '';
-          
-          // 优先选择指定语言
-          if (lang) {
-            const track = captions.find((t: any) => 
-              t.languageCode === lang || t.languageCode?.startsWith(lang)
-            );
-            if (track) {
-              captionUrl = track.baseUrl;
-              selectedLang = track.languageCode || lang;
-            }
-          }
-          
-          // 如果没有指定语言，优先选择英语
-          if (!captionUrl) {
-            const enTrack = captions.find((t: any) => 
-              t.languageCode === 'en' || t.languageCode?.startsWith('en')
-            );
-            if (enTrack) {
-              captionUrl = enTrack.baseUrl;
-              selectedLang = enTrack.languageCode || 'en';
-            }
-          }
-          
-          // 最后选择第一个
-          if (!captionUrl && captions[0]) {
-            captionUrl = captions[0].baseUrl;
-            selectedLang = captions[0].languageCode || 'unknown';
-          }
-
-          if (captionUrl) {
-            // 添加 fmt=json3 参数
-            const finalUrl = captionUrl.includes('?') 
-              ? `${captionUrl}&fmt=json3` 
-              : `${captionUrl}?fmt=json3`;
-            
-            console.log(`📥 [方法2] 获取字幕 [${selectedLang}]: ${finalUrl.substring(0, 100)}...`);
-            
-            const captionResponse = await fetch(finalUrl);
-            if (captionResponse.ok) {
-              const captionData = await captionResponse.text();
-              console.log(`✅ [方法2] 成功获取字幕`);
-              
-              return new NextResponse(captionData, {
-                status: 200,
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Access-Control-Allow-Origin': '*',
-                  'Cache-Control': 'public, max-age=3600',
-                },
-              });
-            } else {
-              console.log(`❌ [方法2] 字幕请求失败: HTTP ${captionResponse.status}`);
-            }
-          } else {
-            console.log(`❌ [方法2] 没有找到可用的字幕 URL`);
-          }
-        } else {
-          console.log(`❌ [方法2] playerResponse 中没有字幕数据`);
-        }
-      }
-    } else {
-      console.log(`❌ [方法2] 页面请求失败: HTTP ${pageResponse.status}`);
-    }
-
-    // 所有方法都失败
+    // 方法 3: 提示用户使用 Whisper
     return NextResponse.json(
       { 
         error: '无法获取字幕',
-        details: '视频可能没有字幕，或字幕已被禁用'
+        details: '该视频可能没有字幕。建议：1) 确认视频有字幕 2) 或考虑使用 Whisper API 进行语音转录',
+        suggestion: 'whisper'
       },
       { status: 404 }
     );
 
   } catch (error: any) {
-    console.error('❌ 代理错误:', error);
+    console.error('❌ 错误:', error);
     return NextResponse.json(
       { error: error.message || 'Proxy error' },
       { status: 500 }
