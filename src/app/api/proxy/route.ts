@@ -64,67 +64,111 @@ export async function GET(request: NextRequest) {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.youtube.com/',
       },
     });
 
     if (pageResponse.ok) {
       const html = await pageResponse.text();
+      console.log(`📄 [方法2] 页面大小: ${html.length} 字符`);
       
-      // 提取 ytInitialPlayerResponse
-      const match = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
-      if (match) {
-        try {
-          const playerResponse = JSON.parse(match[1]);
-          const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-          
-          if (captions && captions.length > 0) {
-            // 找到合适的字幕轨道
-            let captionUrl = null;
-            
-            // 优先选择指定语言
-            if (lang) {
-              const track = captions.find((t: any) => 
-                t.languageCode === lang || t.languageCode?.startsWith(lang)
-              );
-              captionUrl = track?.baseUrl;
-            }
-            
-            // 如果没有指定语言，选择第一个
-            if (!captionUrl && captions[0]) {
-              captionUrl = captions[0].baseUrl;
-            }
+      // 尝试多种正则表达式模式来提取 ytInitialPlayerResponse
+      const patterns = [
+        /ytInitialPlayerResponse\s*=\s*({.+?})\s*;/s,
+        /ytInitialPlayerResponse\s*=\s*({.+?})\s*<\/script>/s,
+        /"player":\s*({.+?})\s*,\s*"playerResponse"/s,
+      ];
 
-            if (captionUrl) {
-              // 添加 fmt=json3 参数
-              const finalUrl = captionUrl.includes('?') 
-                ? `${captionUrl}&fmt=json3` 
-                : `${captionUrl}?fmt=json3`;
-              
-              console.log(`📥 [方法2] 获取字幕: ${finalUrl}`);
-              
-              const captionResponse = await fetch(finalUrl);
-              if (captionResponse.ok) {
-                const captionData = await captionResponse.text();
-                console.log(`✅ [方法2] 成功`);
-                
-                return new NextResponse(captionData, {
-                  status: 200,
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                    'Cache-Control': 'public, max-age=3600',
-                  },
-                });
-              }
-            }
+      let playerResponse = null;
+
+      for (const pattern of patterns) {
+        const match = html.match(pattern);
+        if (match) {
+          try {
+            playerResponse = JSON.parse(match[1]);
+            console.log(`✅ [方法2] 成功提取 playerResponse`);
+            break;
+          } catch (e) {
+            console.log(`⚠️  [方法2] 正则匹配但 JSON 解析失败`);
+            continue;
           }
-        } catch (e) {
-          console.log(`⚠️  [方法2] 解析失败: ${e}`);
         }
       }
-    }
 
-    console.log(`❌ [方法2] 失败`);
+      if (!playerResponse) {
+        console.log(`❌ [方法2] 未找到 ytInitialPlayerResponse`);
+      } else {
+        const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        
+        if (captions && captions.length > 0) {
+          console.log(`📝 [方法2] 找到 ${captions.length} 个字幕轨道`);
+          
+          // 找到合适的字幕轨道
+          let captionUrl = null;
+          let selectedLang = '';
+          
+          // 优先选择指定语言
+          if (lang) {
+            const track = captions.find((t: any) => 
+              t.languageCode === lang || t.languageCode?.startsWith(lang)
+            );
+            if (track) {
+              captionUrl = track.baseUrl;
+              selectedLang = track.languageCode || lang;
+            }
+          }
+          
+          // 如果没有指定语言，优先选择英语
+          if (!captionUrl) {
+            const enTrack = captions.find((t: any) => 
+              t.languageCode === 'en' || t.languageCode?.startsWith('en')
+            );
+            if (enTrack) {
+              captionUrl = enTrack.baseUrl;
+              selectedLang = enTrack.languageCode || 'en';
+            }
+          }
+          
+          // 最后选择第一个
+          if (!captionUrl && captions[0]) {
+            captionUrl = captions[0].baseUrl;
+            selectedLang = captions[0].languageCode || 'unknown';
+          }
+
+          if (captionUrl) {
+            // 添加 fmt=json3 参数
+            const finalUrl = captionUrl.includes('?') 
+              ? `${captionUrl}&fmt=json3` 
+              : `${captionUrl}?fmt=json3`;
+            
+            console.log(`📥 [方法2] 获取字幕 [${selectedLang}]: ${finalUrl.substring(0, 100)}...`);
+            
+            const captionResponse = await fetch(finalUrl);
+            if (captionResponse.ok) {
+              const captionData = await captionResponse.text();
+              console.log(`✅ [方法2] 成功获取字幕`);
+              
+              return new NextResponse(captionData, {
+                status: 200,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                  'Cache-Control': 'public, max-age=3600',
+                },
+              });
+            } else {
+              console.log(`❌ [方法2] 字幕请求失败: HTTP ${captionResponse.status}`);
+            }
+          } else {
+            console.log(`❌ [方法2] 没有找到可用的字幕 URL`);
+          }
+        } else {
+          console.log(`❌ [方法2] playerResponse 中没有字幕数据`);
+        }
+      }
+    } else {
+      console.log(`❌ [方法2] 页面请求失败: HTTP ${pageResponse.status}`);
+    }
 
     // 所有方法都失败
     return NextResponse.json(
