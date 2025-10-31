@@ -2,33 +2,79 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'edge';
 
-// 使用公开的第三方字幕提取 API
-async function fetchFromThirdPartyAPI(videoId: string, lang: string = '') {
-  const apis = [
-    // API 1: yt-transcript-api (公开服务)
-    `https://yt-transcript-api.herokuapp.com/transcript?videoId=${videoId}${lang ? `&lang=${lang}` : ''}`,
-    // API 2: invidious (开源 YouTube 前端)
-    `https://invidious.io.lol/api/v1/captions/${videoId}?lang=${lang || 'en'}`,
-  ];
-
-  for (const apiUrl of apis) {
-    try {
-      console.log(`🔄 尝试第三方 API: ${apiUrl}`);
-      const response = await fetch(apiUrl, {
-        signal: AbortSignal.timeout(10000),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`✅ 第三方 API 成功`);
-        return data;
-      }
-    } catch (e) {
-      console.log(`❌ 第三方 API 失败: ${e}`);
-      continue;
-    }
+// 使用 Supadata.ai API 获取字幕
+async function fetchFromSupadata(videoUrl: string) {
+  const apiKey = process.env.SUPADATA_API_KEY;
+  
+  if (!apiKey) {
+    console.log('⚠️  未配置 SUPADATA_API_KEY，尝试使用备用方案');
+    return null;
   }
 
+  try {
+    console.log('🚀 使用 Supadata.ai API 获取字幕');
+    console.log('📹 视频 URL:', videoUrl);
+    
+    const response = await fetch(`https://api.supadata.ai/v1/transcript?url=${encodeURIComponent(videoUrl)}`, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(30000), // 30秒超时
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log(`❌ Supadata API 错误 (${response.status}):`, errorText);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log('✅ Supadata API 成功获取字幕');
+    
+    return data;
+  } catch (error: any) {
+    console.error('❌ Supadata API 调用失败:', error.message);
+    return null;
+  }
+}
+
+// 备用方案：直接请求 YouTube timedtext API
+async function fetchFromYouTubeDirect(videoId: string, lang: string = '') {
+  console.log(`🔄 [备用方案] YouTube timedtext API`);
+  
+  const youtubeUrl = lang
+    ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
+    : `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`;
+
+  const response = await fetch(youtubeUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+      'Referer': 'https://www.youtube.com/',
+      'Origin': 'https://www.youtube.com',
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (response.ok) {
+    const data = await response.text();
+    
+    if (data && data.trim().length > 0) {
+      try {
+        const json = JSON.parse(data);
+        if (json.events && json.events.length > 0) {
+          console.log(`✅ [备用方案] 成功`);
+          return json;
+        }
+      } catch (e) {
+        console.log(`⚠️  JSON 解析失败`);
+      }
+    }
+  }
+  
   return null;
 }
 
@@ -46,25 +92,61 @@ export async function GET(request: NextRequest) {
   console.log('='.repeat(60));
 
   try {
-    // 方法 1: 尝试第三方 API
-    const thirdPartyData = await fetchFromThirdPartyAPI(videoId, lang);
-    if (thirdPartyData) {
-      // 转换为我们的格式
+    // 构建 YouTube URL
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // 方法 1: 使用 Supadata.ai API（推荐）
+    const supadataResult = await fetchFromSupadata(videoUrl);
+    
+    if (supadataResult) {
+      // Supadata 返回格式: { content: [...], lang: "en", availableLangs: [...] }
+      // 转换为我们应用使用的格式
       let formattedData;
-      if (Array.isArray(thirdPartyData)) {
-        // yt-transcript-api 格式
+      
+      if (supadataResult.content && Array.isArray(supadataResult.content)) {
+        // Supadata 返回的是数组格式，每个元素包含 text, offset, duration
         formattedData = {
-          events: thirdPartyData.map((item: any, index: number) => ({
-            tStartMs: (item.start || item.offset || 0) * 1000,
-            dDurationMs: (item.duration || 0) * 1000,
-            segs: [{ utf8: item.text }]
-          }))
+          events: supadataResult.content.map((item: any) => ({
+            tStartMs: item.offset || 0,  // offset 已经是毫秒
+            dDurationMs: item.duration || 0,  // duration 已经是毫秒
+            segs: [{ utf8: item.text || '' }]
+          })),
+          lang: supadataResult.lang,
+          source: 'supadata'
         };
-      } else {
-        formattedData = thirdPartyData;
+      } else if (typeof supadataResult.content === 'string') {
+        // 如果是纯文本内容（旧格式或其他情况）
+        // 按句子分割并创建虚拟时间戳
+        const sentences = supadataResult.content.split(/[.!?]+/).filter((s: string) => s.trim());
+        formattedData = {
+          events: sentences.map((text: string, index: number) => ({
+            tStartMs: index * 3000, // 每句3秒
+            dDurationMs: 3000,
+            segs: [{ utf8: text.trim() }]
+          })),
+          lang: supadataResult.lang,
+          source: 'supadata'
+        };
       }
 
-      return NextResponse.json(formattedData, {
+      if (formattedData && formattedData.events && formattedData.events.length > 0) {
+        console.log(`✅ 成功转换 ${formattedData.events.length} 段字幕`);
+        return NextResponse.json(formattedData, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'public, max-age=3600',
+          },
+        });
+      }
+    }
+
+    // 方法 2: 备用方案 - 直接请求 YouTube timedtext API
+    const directResult = await fetchFromYouTubeDirect(videoId, lang);
+    
+    if (directResult) {
+      return NextResponse.json(directResult, {
         status: 200,
         headers: {
           'Content-Type': 'application/json',
@@ -74,53 +156,12 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 方法 2: 直接请求 YouTube timedtext API
-    console.log(`🔄 [方法2] timedtext API`);
-    const youtubeUrl = lang
-      ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`
-      : `https://www.youtube.com/api/timedtext?v=${videoId}&fmt=json3`;
-
-    const response = await fetch(youtubeUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
-        'Referer': 'https://www.youtube.com/',
-        'Origin': 'https://www.youtube.com',
-      },
-    });
-
-    if (response.ok) {
-      const data = await response.text();
-      
-      if (data && data.trim().length > 0) {
-        try {
-          const json = JSON.parse(data);
-          if (json.events && json.events.length > 0) {
-            console.log(`✅ [方法2] 成功`);
-            return new NextResponse(data, {
-              status: 200,
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Cache-Control': 'public, max-age=3600',
-              },
-            });
-          }
-        } catch (e) {
-          console.log(`⚠️  JSON 解析失败`);
-        }
-      }
-    }
-
-    console.log(`❌ [方法2] 失败: HTTP ${response.status}`);
-
-    // 方法 3: 提示用户使用 Whisper
+    // 所有方法都失败
     return NextResponse.json(
       { 
         error: '无法获取字幕',
-        details: '该视频可能没有字幕。建议：1) 确认视频有字幕 2) 或考虑使用 Whisper API 进行语音转录',
-        suggestion: 'whisper'
+        details: '该视频可能没有字幕。请确认：\n1) 视频是否有字幕\n2) SUPADATA_API_KEY 是否正确配置\n3) 视频是否为公开视频',
+        suggestion: 'manual_upload'
       },
       { status: 404 }
     );

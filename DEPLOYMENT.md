@@ -42,6 +42,7 @@ git push -u origin main
    - 在项目设置中找到 "Environment Variables"
    - 添加以下变量：
      ```
+     SUPADATA_API_KEY = your-supadata-api-key
      DEEPSEEK_API_KEY = sk-your-deepseek-api-key
      ```
 
@@ -75,7 +76,16 @@ git push -u origin main
 
 | 变量名 | 说明 | 示例值 |
 |--------|------|--------|
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | `sk-xxxxxxxxxxxxxxxx` |
+| `SUPADATA_API_KEY` | Supadata.ai API 密钥（字幕获取） | `sup_xxxxxxxxxxxxxxxx` |
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥（AI 分析） | `sk-xxxxxxxxxxxxxxxx` |
+
+### 获取 Supadata.ai API Key
+
+1. 访问 [Supadata.ai 官网](https://supadata.ai)
+2. 点击 "Sign in" 注册账号
+3. 进入 Dashboard
+4. 复制你的 API Key
+5. 免费账号提供 100 次请求额度
 
 ### 获取 DeepSeek API Key
 

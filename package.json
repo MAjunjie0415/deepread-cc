@@ -13,9 +13,11 @@
   "license": "MIT",
   "scripts": {
     "dev": "next dev",
+    "dev:3005": "PORT=3005 next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:api": "node test-supadata.js"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
